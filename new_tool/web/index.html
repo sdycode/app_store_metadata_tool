@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>App Store Connect Uploader</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>App Store Connect Uploader</h1>
+    <div class="tabs">
+      <button class="tab active" data-tab="new-push">New Push</button>
+      <button class="tab" data-tab="live-update">Live Update</button>
+    </div>
+  </header>
+
+  <main>
+    <aside id="panel">
+      <section class="card">
+        <div class="row">
+          <div class="path" id="workspace-path">No folder picked</div>
+          <button id="btn-pick-folder">Pick folder</button>
+        </div>
+        <input id="folder-input" type="file" webkitdirectory multiple hidden />
+        <div id="info-grid" class="info-grid hidden"></div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <strong>Credential override</strong>
+          <span class="dim">(optional — leave empty if folder has config.json + AuthKey_*.p8)</span>
+        </div>
+        <div class="override-grid">
+          <label class="field">
+            <span>Issuer ID</span>
+            <input type="text" id="issuer-id" placeholder="leave empty — read from config.json" />
+          </label>
+          <label class="field">
+            <span>Key ID</span>
+            <input type="text" id="key-id" placeholder="leave empty — read from config.json" />
+          </label>
+          <label class="field">
+            <span>.p8 key file</span>
+            <div class="row">
+              <button id="btn-pick-key" type="button">Choose .p8</button>
+              <span id="key-summary" class="dim">auto-detected from folder</span>
+              <input id="key-file-input" type="file" accept=".p8" hidden />
+            </div>
+          </label>
+        </div>
+      </section>
+
+      <section class="card load-card">
+        <button id="btn-load" class="primary full">Load workspace</button>
+        <div id="load-hint" class="dim">Pick a folder, then click Load</div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <strong>Locales</strong>
+          <span id="locale-count">(0/0)</span>
+          <span class="spacer"></span>
+          <button class="link" data-locale-op="all">All</button>
+          <button class="link" data-locale-op="none">None</button>
+          <button class="link" data-locale-op="invert">Invert</button>
+        </div>
+        <div id="locale-chips" class="chips"></div>
+        <div id="locale-empty-hint" class="hint hidden">
+          No locales selected — uploads will be skipped.
+        </div>
+      </section>
+
+      <section class="card">
+        <label class="checkbox">
+          <input type="checkbox" id="replace-ss" checked />
+          <span id="replace-hint">Replace SS — wipes all existing screenshots across display types</span>
+        </label>
+      </section>
+
+      <section class="card actions">
+        <button data-action="/action/check-auth" class="btn">🔑 Check Auth</button>
+        <button data-action="/action/validate" class="btn">✓ Validate</button>
+        <button data-action="/action/upload-metadata" class="btn">📄 Upload Metadata</button>
+        <button data-action="/action/upload-screenshots" class="btn">🖼 Upload Screenshots</button>
+        <button data-action="/action/upload-iap" class="btn">💰 Upload IAP</button>
+        <button data-action="/action/upload-all" class="btn primary">☁ Upload All</button>
+        <button data-action="/action/check-screenshots" class="btn">📷 Check SS</button>
+        <button data-action="/action/check-status" class="btn">👁 Check Status</button>
+      </section>
+
+      <section id="run-bar" class="card run-bar hidden">
+        <div class="run-state">
+          <span id="run-indicator" class="dot"></span>
+          <span id="run-label">Running</span>
+        </div>
+        <div class="run-buttons">
+          <button id="btn-pause" class="btn small">⏸ Pause</button>
+          <button id="btn-resume" class="btn small hidden">▶ Resume</button>
+          <button id="btn-cancel" class="btn small danger">⏹ Stop</button>
+        </div>
+      </section>
+    </aside>
+
+    <section id="logs">
+      <div class="logs-toolbar">
+        <strong>Logs</strong>
+        <span id="log-count" class="dim">(0/0)</span>
+        <span class="spacer"></span>
+        <input id="log-search" type="search" placeholder="Search logs…" />
+        <div class="level-chips" id="level-chips"></div>
+        <button id="btn-clear-logs" class="btn small">Clear</button>
+      </div>
+      <div id="log-list"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

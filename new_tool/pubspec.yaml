@@ -1,0 +1,17 @@
+name: asc_upload_tool
+description: Localhost CLI server + web UI for App Store Connect uploads.
+publish_to: none
+version: 1.0.0
+
+environment:
+  sdk: ^3.4.0
+
+dependencies:
+  http: ^1.2.2
+  dart_jsonwebtoken: ^2.14.0
+  crypto: ^3.0.5
+  path: ^1.9.0
+  mime: ^1.0.5
+
+dev_dependencies:
+  lints: ^5.0.0

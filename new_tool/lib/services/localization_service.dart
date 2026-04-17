@@ -110,6 +110,10 @@ class LocalizationService {
     required String locale,
     required Workspace workspace,
     RunState? control,
+    // When true (Live Update tab), push only the `whatsNew` attribute and
+    // leave description / keywords / subtitle / URLs untouched, as those
+    // carry over from the previously shipped version.
+    bool onlyWhatsNew = false,
   }) async {
     await control?.checkpoint();
     final fallback = workspace.config.defaultLanguage;
@@ -119,7 +123,12 @@ class LocalizationService {
       orElse: () => AscResource(
           id: '', type: '', attributes: const {}, relationships: const {}),
     );
-    final attrs = _attrsFor(workspace, locale, fallback);
+    final full = _attrsFor(workspace, locale, fallback);
+    final attrs = onlyWhatsNew
+        ? (full.containsKey('whatsNew')
+            ? <String, dynamic>{'whatsNew': full['whatsNew']}
+            : <String, dynamic>{})
+        : full;
 
     if (found.id.isNotEmpty) {
       if (attrs.isEmpty) {

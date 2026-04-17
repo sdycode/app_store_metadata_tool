@@ -66,7 +66,21 @@ class Orchestrator {
   final LoggingService _log = LoggingService.instance;
   final RunState control = RunState();
   Set<String> selectedLocales;
-  bool replaceScreenshots = true;
+
+  /// Force wipe + re-upload all existing screenshots regardless of count.
+  /// Both checkboxes default to true; user can toggle independently.
+  bool forcefulReplace = true;
+
+  /// When forcefulReplace is false: still delete + re-upload if the local
+  /// file count differs from App Store's existing count. If both flags are
+  /// false, we only upload into empty sets and never touch existing assets.
+  bool replaceOnMismatch = true;
+
+  /// True when the Live Update tab is selected. In that mode
+  /// [uploadMetadata] only pushes per-locale `whatsNew` values and skips
+  /// copyright / app-info (category / name / privacyPolicyUrl) updates,
+  /// because those are carried over from the previously shipped version.
+  bool liveUpdateMode = false;
 
   Orchestrator(this.r)
       : selectedLocales = Set<String>.from(r.workspace.config.localizations);
@@ -137,6 +151,7 @@ class Orchestrator {
           locale: locale,
           workspace: ws,
           control: control,
+          onlyWhatsNew: liveUpdateMode,
         );
         state.metadataByLocale[locale] = true;
         await r.resume.save(ws.config.metadata.packageId,
@@ -146,6 +161,12 @@ class Orchestrator {
       } catch (e) {
         _log.error('$locale metadata failed: $e', scope: 'orchestrator');
       }
+    }
+
+    if (liveUpdateMode) {
+      _log.info(
+          'Live Update mode: only whatsNew per locale was pushed',
+          scope: 'orchestrator');
     }
   }
 
@@ -192,7 +213,8 @@ class Orchestrator {
           localizationId: localizationId,
           locale: locale,
           workspace: ws,
-          replaceAll: replaceScreenshots,
+          forcefulReplace: forcefulReplace,
+          replaceOnMismatch: replaceOnMismatch,
           control: control,
         );
         _log.info(

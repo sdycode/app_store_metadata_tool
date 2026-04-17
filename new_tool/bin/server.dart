@@ -17,7 +17,13 @@ Future<void>? _activeTask;
 
 Future<void> main(List<String> args) async {
   final webDir = _locateWebDir();
-  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, kPort);
+  // Bind on IPv6 with v6Only=false so the same socket accepts BOTH IPv6
+  // (::1) and IPv4 (127.0.0.1) loopback. Firefox resolves `localhost` to
+  // ::1 first, and a server bound only to 127.0.0.1 will intermittently
+  // appear unreachable ("Failed to fetch"). Binding dual-stack fixes it.
+  final server = await HttpServer.bind(
+      InternetAddress.anyIPv6, kPort,
+      v6Only: false);
   server.autoCompress = true;
   print('ASC upload tool listening on http://localhost:$kPort');
 
@@ -30,10 +36,21 @@ Future<void> main(List<String> args) async {
 }
 
 Directory _locateWebDir() {
-  // When running from `dart run bin/server.dart` cwd is the package root.
+  // Resolve in several ways so the same code path works for:
+  //   - `dart run bin/server.dart` (cwd = package root)
+  //   - compiled `./asc-server` launched via double-click (cwd = ~)
+  //   - compiled `./asc-server` launched from elsewhere
+  // `Platform.resolvedExecutable` is the Dart VM or the compiled binary;
+  // its parent dir is where we placed `web/` alongside the exe.
+  final exeDir = File(Platform.resolvedExecutable).parent.path;
+  final scriptDir = File.fromUri(Platform.script).parent.path;
   final candidates = [
     Directory(p.join(Directory.current.path, 'web')),
     Directory(p.join(Directory.current.path, 'new_tool', 'web')),
+    Directory(p.join(exeDir, 'web')),
+    Directory(p.join(exeDir, '..', 'web')),
+    Directory(p.join(scriptDir, 'web')),
+    Directory(p.join(scriptDir, '..', 'web')),
   ];
   for (final d in candidates) {
     if (d.existsSync()) return d;
@@ -53,7 +70,23 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
     final path = req.uri.path;
     if (req.method == 'GET') {
       if (path == '/' || path == '/index.html') {
-        await _serveFile(req, File(p.join(webDir.path, 'index.html')), 'text/html');
+        // Serve index.html with cache-busting query strings on asset refs.
+        // A fresh token per request guarantees the browser fetches new JS/CSS
+        // even if it ignored Cache-Control, has a stale ServiceWorker, or
+        // was opened in a tab that cached the previous server's response.
+        final html = await File(p.join(webDir.path, 'index.html'))
+            .readAsString();
+        final v = DateTime.now().microsecondsSinceEpoch.toString();
+        final patched = html
+            .replaceAll('href="/style.css"', 'href="/style.css?v=$v"')
+            .replaceAll('src="/app.js"', 'src="/app.js?v=$v"')
+            // Inject a visible build badge so you can verify which response
+            // the browser rendered. If the on-screen token matches what the
+            // terminal logs below, you're on fresh code. If not → cache.
+            .replaceAll('<body>', '<body>\n<div id="build-badge">build $v</div>');
+        LoggingService.instance
+            .info('Served / with build token $v', scope: 'server');
+        _writeStatic(req, 'text/html', patched);
         return;
       }
       if (path == '/app.js') {
@@ -64,6 +97,10 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
       if (path == '/style.css') {
         await _serveFile(
             req, File(p.join(webDir.path, 'style.css')), 'text/css');
+        return;
+      }
+      if (path == '/health') {
+        await _json(req, {'ok': true, 'port': kPort, 'ts': DateTime.now().toIso8601String()});
         return;
       }
       if (path == '/logs') {
@@ -180,7 +217,9 @@ Map<String, dynamic> _statusSnapshot() {
           },
     'control': _orch?.control.toJson() ?? {'active': false},
     'selectedLocales': _orch?.selectedLocales.toList() ?? const [],
-    'replaceScreenshots': _orch?.replaceScreenshots ?? true,
+    'forcefulReplace': _orch?.forcefulReplace ?? true,
+    'replaceOnMismatch': _orch?.replaceOnMismatch ?? true,
+    'liveUpdateMode': _orch?.liveUpdateMode ?? false,
   };
 }
 
@@ -258,8 +297,14 @@ Future<void> _handleSetOptions(HttpRequest req) async {
   }
   final body = await utf8.decodeStream(req);
   final data = jsonDecode(body) as Map<String, dynamic>;
-  if (data.containsKey('replaceScreenshots')) {
-    _orch!.replaceScreenshots = data['replaceScreenshots'] as bool;
+  if (data.containsKey('forcefulReplace')) {
+    _orch!.forcefulReplace = data['forcefulReplace'] as bool;
+  }
+  if (data.containsKey('replaceOnMismatch')) {
+    _orch!.replaceOnMismatch = data['replaceOnMismatch'] as bool;
+  }
+  if (data.containsKey('liveUpdateMode')) {
+    _orch!.liveUpdateMode = data['liveUpdateMode'] as bool;
   }
   await _json(req, _statusSnapshot());
 }
@@ -387,8 +432,32 @@ Future<void> _serveFile(HttpRequest req, File file, String contentType) async {
     return;
   }
   req.response.headers.contentType = ContentType.parse(contentType);
+  _applyNoCache(req.response);
   await req.response.addStream(file.openRead());
   await req.response.close();
+}
+
+/// Writes a pre-built string body with no-cache headers. Used for the
+/// rewritten index.html that carries cache-busting `?v=<ts>` on asset refs.
+/// Uses utf8.encode to preserve unicode (emoji, em-dashes, arrows) because
+/// the default HttpResponse.write() goes through latin-1 and throws on
+/// non-ASCII characters.
+Future<void> _writeStatic(
+    HttpRequest req, String contentType, String body) async {
+  final ct = contentType.contains('charset=')
+      ? contentType
+      : '$contentType; charset=utf-8';
+  req.response.headers.contentType = ContentType.parse(ct);
+  _applyNoCache(req.response);
+  req.response.add(utf8.encode(body));
+  await req.response.close();
+}
+
+void _applyNoCache(HttpResponse res) {
+  res.headers.set(
+      'Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.headers.set('Pragma', 'no-cache');
+  res.headers.set('Expires', '0');
 }
 
 Future<void> _json(HttpRequest req, Object body) async {

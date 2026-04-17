@@ -168,7 +168,12 @@ class ScreenshotService {
     required String localizationId,
     required String locale,
     required Workspace workspace,
-    required bool replaceAll,
+    // Always wipe every existing set's shots and re-upload.
+    required bool forcefulReplace,
+    // When forcefulReplace is false: still replace a set's shots if the
+    // local file count differs from the remote count. When both are false
+    // existing shots are left alone and local files only fill empty sets.
+    required bool replaceOnMismatch,
     RunState? control,
   }) async {
     await control?.checkpoint();
@@ -212,7 +217,9 @@ class ScreenshotService {
 
     final existingSets = await listSets(localizationId);
 
-    if (replaceAll) {
+    // Forceful replace: wipe EVERY existing shot across EVERY display-type
+    // set for this locale, then the per-group loop below just uploads.
+    if (forcefulReplace) {
       for (final set in existingSets) {
         await control?.checkpoint();
         final displayType =
@@ -225,7 +232,7 @@ class ScreenshotService {
           totalDeleted++;
         }
         _log.info(
-            '$locale/$displayType: wiped ${shots.length} existing (replace mode)',
+            '$locale/$displayType: wiped ${shots.length} existing (forceful replace)',
             scope: 'screenshot');
       }
     }
@@ -246,10 +253,11 @@ class ScreenshotService {
             scope: 'screenshot');
       }
 
+      // Existing shots already wiped above when forcefulReplace=true.
       final existingShots =
-          replaceAll ? <AscResource>[] : await listShots(set.id);
+          forcefulReplace ? <AscResource>[] : await listShots(set.id);
 
-      if (replaceAll) {
+      if (forcefulReplace) {
         await _uploadAll(set.id, files, locale, displayType, control);
         totalUploaded += files.length;
         actions.add('replaced');
@@ -264,6 +272,15 @@ class ScreenshotService {
       }
 
       if (existingShots.length != files.length) {
+        if (!replaceOnMismatch) {
+          _log.info(
+              '$locale/$displayType: count mismatch '
+              '(${existingShots.length} vs ${files.length}) — keeping existing '
+              '(both replace options are off)',
+              scope: 'screenshot');
+          actions.add('kept');
+          continue;
+        }
         for (final s in existingShots) {
           await control?.checkpoint();
           await deleteShot(s.id);

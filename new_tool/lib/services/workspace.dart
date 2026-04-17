@@ -126,12 +126,17 @@ class WorkspaceLoader {
     final descriptions = await readLocaleMap('description.json');
     final keywords = await readLocaleMap('keywords.json');
     final subtitles = await readLocaleMap('subtitle.json');
-    final releaseNotes = await readLocaleMap('releasenotes.json');
+    // Accept either releasenotes.json or release_notes.json (user folders
+    // have been seen with both spellings). Whichever exists first wins; if
+    // both exist, merge with release_notes.json taking precedence.
+    final releaseNotesA = await readLocaleMap('releasenotes.json');
+    final releaseNotesB = await readLocaleMap('release_notes.json');
+    final releaseNotes = {...releaseNotesA, ...releaseNotesB};
 
-    // Pre-flight sanity checks — non-blocking. Convention: an IAP's
-    // product_id should share the first two dot-segments with the app's
-    // package_id (e.g. "com.zapp.testbuild" + "com.zapp.noads").
+    // Pre-flight sanity checks — non-blocking.
     final warnings = <String>[];
+
+    // IAP product_id prefix must share first two dot-segments with package_id.
     final pkg = cfg.metadata.packageId;
     final pkgPrefix = _twoSegmentPrefix(pkg);
     if (pkgPrefix.isNotEmpty && cfg.inApp != null) {
@@ -149,9 +154,28 @@ class WorkspaceLoader {
       }
     }
 
+    // Keywords are limited to 100 characters per locale by Apple — flag any
+    // over-limit entries so the user can trim before uploading. Without this
+    // Apple rejects the PATCH for that locale with a validation error.
+    keywords.forEach((locale, value) {
+      if (value.length > 100) {
+        final msg = 'keywords["$locale"] is ${value.length} chars '
+            '(limit 100) — upload will be rejected for this locale';
+        warnings.add(msg);
+        _log.warn(msg, scope: 'workspace');
+      }
+    });
+
     _log.success(
         'Loaded workspace: ${cfg.metadata.packageId} (${cfg.localizations.length} locales)'
         '${warnings.isEmpty ? '' : '  [${warnings.length} warning(s)]'}',
+        scope: 'workspace');
+
+    // Log the expected tab so the user sees it even before checking the UI.
+    final expectedTab = cfg.metadata.updateVersion.isEmpty
+        ? 'New Push (update_version is empty)'
+        : 'Live Update (update_version = "${cfg.metadata.updateVersion}")';
+    _log.info('Mode expected from config.json → $expectedTab',
         scope: 'workspace');
 
     return Workspace(

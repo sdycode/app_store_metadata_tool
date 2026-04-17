@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../models/asc_resource.dart';
-import 'app_info_service.dart';
 import 'app_service.dart';
 import 'asc_client.dart';
 import 'auth.dart';
@@ -26,7 +25,6 @@ class OrchestratorRuntime {
   final LocalizationService locs;
   final ScreenshotService screenshots;
   final IapService iap;
-  final AppInfoService appInfo;
   final ValidationService validator;
   final ResumeService resume;
 
@@ -39,7 +37,6 @@ class OrchestratorRuntime {
     required this.locs,
     required this.screenshots,
     required this.iap,
-    required this.appInfo,
     required this.validator,
     required this.resume,
   });
@@ -56,7 +53,6 @@ class OrchestratorRuntime {
       locs: LocalizationService(client),
       screenshots: ScreenshotService(client),
       iap: IapService(client),
-      appInfo: AppInfoService(client),
       validator: ValidationService(),
       resume: ResumeService(Directory(p.join(ws.root.path, '.asc_resume'))),
     );
@@ -129,28 +125,10 @@ class Orchestrator {
       appId: app.id,
       updateVersion: ws.config.metadata.updateVersion,
     );
-
-    // Version-level copyright from config.json → version.attributes.copyright
-    final copyright = ws.config.metadata.copyright ?? '';
-    if (copyright.isNotEmpty) {
-      try {
-        await r.versions.patchMetadata(
-          versionId: version.id,
-          copyright: copyright,
-        );
-        _log.success('version ${version.id}: copyright set to "$copyright"',
-            scope: 'orchestrator');
-      } catch (e) {
-        _log.error('version ${version.id}: copyright patch failed: $e',
-            scope: 'orchestrator');
-      }
-    }
-
     state.versionDone = true;
     await r.resume.save(ws.config.metadata.packageId,
         ws.config.metadata.updateVersion, state);
 
-    // Per-locale version localization (description / keywords / subtitle / whatsNew / URLs)
     for (final locale in locales) {
       try {
         await control.checkpoint();
@@ -167,71 +145,6 @@ class Orchestrator {
         rethrow;
       } catch (e) {
         _log.error('$locale metadata failed: $e', scope: 'orchestrator');
-      }
-    }
-
-    // App-level metadata (categories + per-locale name + privacyPolicyUrl).
-    await _applyAppInfo(app.id, locales);
-  }
-
-  /// Push primary category onto the editable appInfo and upsert each
-  /// selected locale's appInfoLocalization with app name + privacyPolicyUrl.
-  Future<void> _applyAppInfo(String appId, List<String> locales) async {
-    final ws = r.workspace;
-    final meta = ws.config.metadata;
-    final primaryCategory = (meta.primaryCategory ?? '').trim();
-    final privacyUrl = (meta.privacyUrl ?? '').trim();
-    final defaultName = (meta.name ?? '').trim();
-    final specific = ws.config.specificNameLocales;
-
-    // Skip entirely if there's nothing to push.
-    final hasName = defaultName.isNotEmpty || specific.isNotEmpty;
-    if (primaryCategory.isEmpty && privacyUrl.isEmpty && !hasName) {
-      return;
-    }
-
-    final AscResource appInfo;
-    try {
-      appInfo = await r.appInfo.findEditable(appId);
-    } catch (e) {
-      _log.error('app-info step skipped: $e', scope: 'orchestrator');
-      return;
-    }
-
-    if (primaryCategory.isNotEmpty) {
-      try {
-        await control.checkpoint();
-        await r.appInfo.patchCategories(
-          appInfo.id,
-          primaryCategory: primaryCategory,
-        );
-      } on CancelledException {
-        rethrow;
-      } catch (e) {
-        _log.error('category patch failed: $e', scope: 'orchestrator');
-      }
-    }
-
-    if (!hasName && privacyUrl.isEmpty) return;
-
-    for (final locale in locales) {
-      try {
-        await control.checkpoint();
-        final nameForLocale =
-            (specific[locale]?.trim().isNotEmpty ?? false)
-                ? specific[locale]!.trim()
-                : defaultName;
-        await r.appInfo.upsertLocalization(
-          appInfoId: appInfo.id,
-          locale: locale,
-          name: nameForLocale.isEmpty ? null : nameForLocale,
-          privacyPolicyUrl: privacyUrl.isEmpty ? null : privacyUrl,
-          control: control,
-        );
-      } on CancelledException {
-        rethrow;
-      } catch (e) {
-        _log.error('$locale appInfo loc failed: $e', scope: 'orchestrator');
       }
     }
   }

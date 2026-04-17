@@ -31,21 +31,13 @@ class LocalizationService {
       attrs['whatsNew'] = whatsNew;
     }
     final meta = ws.config.metadata;
-    _maybeUrl(attrs, 'marketingUrl', meta.marketingUrl);
-    _maybeUrl(attrs, 'supportUrl', meta.supportUrl);
-    return attrs;
-  }
-
-  void _maybeUrl(Map<String, dynamic> attrs, String key, String? value) {
-    if (value == null || value.isEmpty) return;
-    final u = Uri.tryParse(value);
-    if (u != null && u.isAbsolute && (u.scheme == 'http' || u.scheme == 'https')) {
-      attrs[key] = value;
-      return;
+    if ((meta.marketingUrl ?? '').isNotEmpty) {
+      attrs['marketingUrl'] = meta.marketingUrl;
     }
-    _log.warn(
-        'Skipping $key — not a valid http/https URL: "$value"',
-        scope: 'locale');
+    if ((meta.supportUrl ?? '').isNotEmpty) {
+      attrs['supportUrl'] = meta.supportUrl;
+    }
+    return attrs;
   }
 
   String? _extractLockedAttribute(String body) {
@@ -55,11 +47,6 @@ class LocalizationService {
     final unknown =
         RegExp(r"'([^']+)' is not an attribute on").firstMatch(body);
     if (unknown != null) return unknown.group(1);
-    // JSON:API source pointer — covers ENTITY_ERROR.ATTRIBUTE.TYPE,
-    // INVALID_FORMAT, and any future per-attribute error shape.
-    final pointer =
-        RegExp(r'/data/attributes/([A-Za-z0-9_]+)').firstMatch(body);
-    if (pointer != null) return pointer.group(1);
     return null;
   }
 

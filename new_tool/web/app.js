@@ -59,7 +59,15 @@ $('#replace-ss').addEventListener('change', (e) => {
 });
 
 document.querySelectorAll('[data-action]').forEach((b) => {
-  b.addEventListener('click', () => runAction(b.dataset.action));
+  b.addEventListener('click', () => {
+    // Highlight the clicked button while its action is in flight; the
+    // poll loop clears it once control.isActive goes false.
+    document
+        .querySelectorAll('[data-action].running')
+        .forEach((x) => x.classList.remove('running'));
+    b.classList.add('running');
+    runAction(b.dataset.action);
+  });
 });
 
 document.querySelectorAll('[data-locale-op]').forEach((b) => {
@@ -147,16 +155,29 @@ async function uploadWorkspace() {
 
   $('#btn-load').disabled = true;
   $('#load-hint').textContent = `Uploading ${files.length} files…`;
+  let loadedRoot = null;
   try {
     const resp = await fetch('/upload', { method: 'POST', body: form });
     if (!resp.ok) throw new Error(await resp.text());
     const data = await resp.json();
     applyStatus(data.status);
-    $('#load-hint').textContent = 'Workspace loaded. Run any action.';
+    loadedRoot = data?.status?.workspace?.root ?? null;
+    $('#load-hint').textContent =
+        'Workspace loaded. To re-load, pick the folder again.';
   } catch (err) {
     alert('Upload failed: ' + err);
     $('#load-hint').textContent = 'Load failed — see logs';
   } finally {
+    // Browsers release File handles after the first fetch consumes them;
+    // a second submit with the same FileList triggers "Failed to fetch".
+    // Reset both file inputs so the user re-picks next time and every
+    // File reference is fresh.
+    folderInput.value = '';
+    $('#key-file-input').value = '';
+    if (loadedRoot) {
+      $('#workspace-path').textContent = loadedRoot;
+    }
+    $('#key-summary').textContent = 'auto-detected from folder';
     $('#btn-load').disabled = false;
   }
 }
@@ -243,9 +264,24 @@ function applyStatus(s) {
     $('#replace-ss').checked = state.replaceScreenshots;
     renderReplaceHint();
     renderLocales();
+    renderWarnings(s.workspace.warnings || []);
   }
   state.controlState = s.control || state.controlState;
   renderRunBar();
+}
+
+function renderWarnings(list) {
+  const card = $('#warnings-card');
+  const host = $('#warnings-list');
+  host.innerHTML = '';
+  if (!list || list.length === 0) {
+    card.classList.add('hidden');
+    return;
+  }
+  card.classList.remove('hidden');
+  for (const msg of list) {
+    host.appendChild(el('li', {}, msg));
+  }
 }
 
 function renderLocales() {
@@ -278,10 +314,16 @@ function renderRunBar() {
   const c = state.controlState;
   if (!c.active) {
     bar.classList.add('hidden');
+    // Clear the action-button highlight when nothing is running.
+    document
+        .querySelectorAll('[data-action].running')
+        .forEach((x) => x.classList.remove('running'));
     return;
   }
   bar.classList.remove('hidden');
   $('#run-indicator').classList.toggle('paused', !!c.paused);
+  // Spinner only when actively running (not when paused).
+  $('#run-spinner').classList.toggle('hidden', !!c.paused);
   $('#run-label').textContent = c.paused ? `Paused — ${c.action}` : `Running — ${c.action}`;
   $('#btn-pause').classList.toggle('hidden', !!c.paused);
   $('#btn-resume').classList.toggle('hidden', !c.paused);

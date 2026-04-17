@@ -16,6 +16,10 @@ class Workspace {
   final Map<String, String> subtitles;
   final Map<String, String> releaseNotes;
 
+  /// Non-blocking warnings raised at load time (prefix mismatches, missing
+  /// assets, etc). Displayed in the UI and also logged.
+  final List<String> warnings;
+
   Workspace({
     required this.root,
     required this.config,
@@ -24,6 +28,7 @@ class Workspace {
     required this.keywords,
     required this.subtitles,
     required this.releaseNotes,
+    this.warnings = const [],
   });
 
   Directory get screenshotsRoot => Directory(p.join(root.path, 'screenshots'));
@@ -123,48 +128,31 @@ class WorkspaceLoader {
     final subtitles = await readLocaleMap('subtitle.json');
     final releaseNotes = await readLocaleMap('releasenotes.json');
 
-    _log.success(
-        'Loaded workspace: ${cfg.metadata.packageId} (${cfg.localizations.length} locales)',
-        scope: 'workspace');
-
-    // Dump the screenshots inventory so the user can see exactly what the
-    // server received — makes silent fallbacks immediately visible.
-    final ssRoot = Directory(p.join(root.path, 'screenshots'));
-    if (ssRoot.existsSync()) {
-      final lines = <String>[];
-      for (final entry in ssRoot.listSync()) {
-        if (entry is! Directory) continue;
-        final name = p.basename(entry.path);
-        final imageFiles = entry
-            .listSync()
-            .whereType<File>()
-            .where((f) {
-              final n = p.basename(f.path).toLowerCase();
-              if (n.startsWith('.')) return false;
-              return n.endsWith('.png') ||
-                  n.endsWith('.jpg') ||
-                  n.endsWith('.jpeg');
-            })
-            .toList();
-          final otherFiles = entry
-            .listSync()
-            .whereType<File>()
-            .where((f) {
-              final n = p.basename(f.path).toLowerCase();
-              return !imageFiles.contains(f) && !n.startsWith('.');
-            })
-            .map((f) => p.basename(f.path))
-            .toList();
-        final tag = otherFiles.isEmpty ? '' : '  [ignored: ${otherFiles.join(', ')}]';
-        lines.add('  $name: ${imageFiles.length} image(s)$tag');
+    // Pre-flight sanity checks — non-blocking. Convention: an IAP's
+    // product_id should share the first two dot-segments with the app's
+    // package_id (e.g. "com.zapp.testbuild" + "com.zapp.noads").
+    final warnings = <String>[];
+    final pkg = cfg.metadata.packageId;
+    final pkgPrefix = _twoSegmentPrefix(pkg);
+    if (pkgPrefix.isNotEmpty && cfg.inApp != null) {
+      for (final iap in cfg.inApp!.iapMetadata) {
+        final pid = iap.productId.trim();
+        if (pid.isEmpty) continue;
+        final pidPrefix = _twoSegmentPrefix(pid);
+        if (pidPrefix != pkgPrefix) {
+          final msg = 'IAP product_id "$pid" prefix "$pidPrefix" does not '
+              'match package_id "$pkg" prefix "$pkgPrefix" '
+              '(review config.json before uploading)';
+          warnings.add(msg);
+          _log.warn(msg, scope: 'workspace');
+        }
       }
-      _log.info(
-          'screenshots/ inventory:\n${lines.isEmpty ? '  (empty)' : lines.join('\n')}',
-          scope: 'workspace');
-    } else {
-      _log.warn('screenshots/ folder missing in workspace',
-          scope: 'workspace');
     }
+
+    _log.success(
+        'Loaded workspace: ${cfg.metadata.packageId} (${cfg.localizations.length} locales)'
+        '${warnings.isEmpty ? '' : '  [${warnings.length} warning(s)]'}',
+        scope: 'workspace');
 
     return Workspace(
       root: root,
@@ -174,7 +162,17 @@ class WorkspaceLoader {
       keywords: keywords,
       subtitles: subtitles,
       releaseNotes: releaseNotes,
+      warnings: warnings,
     );
+  }
+
+  /// Returns the first two dot-separated segments of [id], e.g. for
+  /// "com.zapp.testbuild" → "com.zapp". Returns "" when fewer than 2
+  /// segments are present.
+  String _twoSegmentPrefix(String id) {
+    final parts = id.split('.');
+    if (parts.length < 2) return '';
+    return '${parts[0]}.${parts[1]}';
   }
 
   Future<File> _findP8(Directory root, String keyId) async {

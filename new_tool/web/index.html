@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>App Store Connect Uploader</title>
+  <title>Metadata Uploader</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <header>
-    <h1>App Store Connect Uploader</h1>
+    <h1>Metadata Uploader</h1>
     <div class="tabs">
       <button class="tab active" data-tab="new-push">New Push</button>
       <button class="tab" data-tab="live-update">Live Update</button>
@@ -29,22 +29,22 @@
       <section class="card">
         <div class="section-head">
           <strong>Credential override</strong>
-          <span class="dim">(optional — leave empty if folder has config.json + AuthKey_*.p8)</span>
+          <span class="dim">(optional — replaces values in config.json)</span>
         </div>
         <div class="override-grid">
           <label class="field">
             <span>Issuer ID</span>
-            <input type="text" id="issuer-id" placeholder="leave empty — read from config.json" />
+            <input type="text" id="issuer-id" placeholder="from config.json" />
           </label>
           <label class="field">
             <span>Key ID</span>
-            <input type="text" id="key-id" placeholder="leave empty — read from config.json" />
+            <input type="text" id="key-id" placeholder="from config.json" />
           </label>
           <label class="field">
             <span>.p8 key file</span>
             <div class="row">
               <button id="btn-pick-key" type="button">Choose .p8</button>
-              <span id="key-summary" class="dim">auto-detected from folder</span>
+              <span id="key-summary" class="dim">from folder</span>
               <input id="key-file-input" type="file" accept=".p8" hidden />
             </div>
           </label>
@@ -54,6 +54,15 @@
       <section class="card load-card">
         <button id="btn-load" class="primary full">Load workspace</button>
         <div id="load-hint" class="dim">Pick a folder, then click Load</div>
+      </section>
+
+      <section id="warnings-card" class="card warnings-card hidden">
+        <div class="warnings-head">
+          <span class="warn-icon">⚠</span>
+          <strong>Workspace warnings</strong>
+          <span class="dim">— non-blocking, upload will still proceed</span>
+        </div>
+        <ul id="warnings-list"></ul>
       </section>
 
       <section class="card">
@@ -78,6 +87,19 @@
         </label>
       </section>
 
+      <section id="run-bar" class="card run-bar hidden">
+        <div class="run-state">
+          <span id="run-spinner" class="spinner"></span>
+          <span id="run-indicator" class="dot"></span>
+          <span id="run-label">Running</span>
+        </div>
+        <div class="run-buttons">
+          <button id="btn-pause" class="btn small">⏸ Pause</button>
+          <button id="btn-resume" class="btn small hidden">▶ Resume</button>
+          <button id="btn-cancel" class="btn small danger">⏹ Stop</button>
+        </div>
+      </section>
+
       <section class="card actions">
         <button data-action="/action/check-auth" class="btn">🔑 Check Auth</button>
         <button data-action="/action/validate" class="btn">✓ Validate</button>
@@ -87,18 +109,6 @@
         <button data-action="/action/upload-all" class="btn primary">☁ Upload All</button>
         <button data-action="/action/check-screenshots" class="btn">📷 Check SS</button>
         <button data-action="/action/check-status" class="btn">👁 Check Status</button>
-      </section>
-
-      <section id="run-bar" class="card run-bar hidden">
-        <div class="run-state">
-          <span id="run-indicator" class="dot"></span>
-          <span id="run-label">Running</span>
-        </div>
-        <div class="run-buttons">
-          <button id="btn-pause" class="btn small">⏸ Pause</button>
-          <button id="btn-resume" class="btn small hidden">▶ Resume</button>
-          <button id="btn-cancel" class="btn small danger">⏹ Stop</button>
-        </div>
       </section>
     </aside>
 

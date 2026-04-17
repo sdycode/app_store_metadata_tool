@@ -158,19 +158,9 @@ class ScreenshotService {
 
   Directory _resolveLocaleDir(Workspace ws, String locale) {
     final primary = ws.screenshotDirFor(locale);
-    final primaryExists = primary.existsSync();
-    final primaryShots = primaryExists ? _listLocalShots(primary) : const <File>[];
-    if (primaryExists && primaryShots.isNotEmpty) {
-      _log.info('$locale: using own folder (${primaryShots.length} files)',
-          scope: 'screenshot');
+    if (primary.existsSync() && _listLocalShots(primary).isNotEmpty) {
       return primary;
     }
-    final reason = !primaryExists
-        ? 'folder not found at ${primary.path}'
-        : 'folder has 0 valid images (only .png/.jpg/.jpeg, no hidden files)';
-    _log.warn(
-        '$locale: FALLBACK to ${ws.config.defaultLanguage} — $reason',
-        scope: 'screenshot');
     return ws.screenshotDirFor(ws.config.defaultLanguage);
   }
 
@@ -184,7 +174,6 @@ class ScreenshotService {
     await control?.checkpoint();
     final dir = _resolveLocaleDir(workspace, locale);
     final localFiles = _listLocalShots(dir);
-    final sourceFolder = p.basename(dir.path);
 
     if (localFiles.isEmpty) {
       _log.info('$locale: no local screenshots; keeping existing',
@@ -206,7 +195,7 @@ class ScreenshotService {
       }
       final displayType = detectDisplayType(size['width']!, size['height']!);
       _log.info(
-          '$locale ← $sourceFolder/$name ${size['width']}x${size['height']} → $displayType',
+          '$locale: $name ${size['width']}x${size['height']} → $displayType',
           scope: 'screenshot');
       groups.putIfAbsent(displayType, () => []).add(f);
     }

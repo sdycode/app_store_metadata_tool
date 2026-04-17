@@ -176,6 +176,7 @@ Map<String, dynamic> _statusSnapshot() {
             'localizations': ws.config.localizations,
             'iapCount': ws.config.inApp?.iapMetadata.length ?? 0,
             'keyFile': ws.p8Key.path,
+            'warnings': ws.warnings,
           },
     'control': _orch?.control.toJson() ?? {'active': false},
     'selectedLocales': _orch?.selectedLocales.toList() ?? const [],

@@ -388,6 +388,71 @@ button.link {
   font-weight: 600;
 }
 
+/* Hard-blocking keyword-length error — same visual weight as the tab/version
+   mismatch banner, but different icon + title so the user can tell them apart. */
+.keyword-block {
+  background: #fff0f0;
+  border: 2px solid #c62828;
+  padding: 14px;
+}
+#keyword-block-title {
+  font-size: 17px;
+  font-weight: 800;
+  color: #c62828;
+  letter-spacing: 0.2px;
+  margin-bottom: 6px;
+}
+.keyword-block-detail {
+  font-size: 12.5px;
+  color: #8a1a1a;
+  line-height: 1.45;
+}
+.keyword-block-detail ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.keyword-block-detail code {
+  background: #fadbd8;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+.radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.radio input { margin-top: 3px; }
+
+.conflict-hint {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #fff0f0;
+  border: 1px solid #c62828;
+  border-radius: 5px;
+  font-size: 12px;
+  color: #8a1a1a;
+  line-height: 1.45;
+}
+
+/* Locale chips that aren't in config.json — drawn with a dashed border so
+   the user can tell which locales will rely on en-US fallback. */
+.chip.extra {
+  border-style: dashed;
+  color: var(--dim);
+}
+.chip.extra.selected {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #e8eaf6;
+}
+
 .mismatch-card {
   background: #fff0f0;
   border: 2px solid #c62828;
@@ -411,6 +476,105 @@ button.link {
   border-radius: 3px;
   font-family: ui-monospace, Menlo, monospace;
 }
+
+/* Regional-toggle button sits below the locale chips. Three visual states
+   reflect inclusion: full (green ✓), none (red ✕), partial (amber ◐). */
+.regional-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s;
+}
+.regional-btn:hover { background: #f4f4f6; }
+.regional-icon {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.regional-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.regional-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.regional-codes {
+  font-size: 11px;
+  color: var(--dim);
+  font-family: ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.regional-btn.state-all {
+  border-color: #2e7d32;
+  background: #e8f5e9;
+}
+.regional-btn.state-all .regional-icon {
+  background: #2e7d32;
+  color: white;
+}
+.regional-btn.state-all .regional-title { color: #2e7d32; }
+.regional-btn.state-none {
+  border-color: #c62828;
+  background: #ffebee;
+}
+.regional-btn.state-none .regional-icon {
+  background: #c62828;
+  color: white;
+}
+.regional-btn.state-none .regional-title { color: #c62828; }
+.regional-btn.state-partial {
+  border-color: #c77700;
+  background: #fff8e1;
+}
+.regional-btn.state-partial .regional-icon {
+  background: #c77700;
+  color: white;
+}
+.regional-btn.state-partial .regional-title { color: #c77700; }
+
+.fallback-card {
+  background: #e8f4ff;
+  border-color: #7cb2ed;
+}
+.fallback-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: #1f5fa8;
+}
+.fallback-head .info-icon {
+  font-size: 15px;
+}
+.fallback-card ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11.5px;
+  color: #1f5fa8;
+  line-height: 1.45;
+}
+.fallback-card li { margin-bottom: 2px; }
 
 .warnings-card {
   background: #fff8e1;

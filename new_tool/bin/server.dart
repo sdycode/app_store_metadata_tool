@@ -200,6 +200,45 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
   }
 }
 
+/// For every active locale, returns the length of the keyword string
+/// we would actually PATCH to Apple — i.e. the locale's own value if
+/// keywords.json has it, else the default-language fallback.
+Map<String, int> _effectiveKeywordLengths() {
+  final orch = _orch;
+  if (orch == null) return const {};
+  final ws = orch.r.workspace;
+  final fallback = ws.config.defaultLanguage;
+  final fb = ws.keywords[fallback] ?? '';
+  final out = <String, int>{};
+  for (final locale in orch.activeLocaleSet) {
+    final own = ws.keywords[locale];
+    out[locale] = (own ?? fb).length;
+  }
+  return out;
+}
+
+/// Per-text-field list of locales missing their own translation — those
+/// will upload using the default-language fallback value. Surfaces as a
+/// non-blocking warning in the UI so the user knows.
+Map<String, List<String>> _fallbackUsage() {
+  final orch = _orch;
+  if (orch == null) return const {};
+  final ws = orch.r.workspace;
+  final missing = <String, List<String>>{
+    'description': [],
+    'keywords': [],
+    'subtitle': [],
+    'releasenotes': [],
+  };
+  for (final locale in orch.activeLocaleSet) {
+    if (!ws.descriptions.containsKey(locale)) missing['description']!.add(locale);
+    if (!ws.keywords.containsKey(locale)) missing['keywords']!.add(locale);
+    if (!ws.subtitles.containsKey(locale)) missing['subtitle']!.add(locale);
+    if (!ws.releaseNotes.containsKey(locale)) missing['releasenotes']!.add(locale);
+  }
+  return missing;
+}
+
 Map<String, dynamic> _statusSnapshot() {
   final ws = _orch?.r.workspace;
   return {
@@ -217,6 +256,23 @@ Map<String, dynamic> _statusSnapshot() {
           },
     'control': _orch?.control.toJson() ?? {'active': false},
     'selectedLocales': _orch?.selectedLocales.toList() ?? const [],
+    'activeLocaleSet': _orch?.activeLocaleSet ?? const [],
+    'activeLocaleSetName': _orch?.activeLocaleSetName ?? '15',
+    'configLocaleCount': ws?.config.localizations.length ?? 0,
+    // Raw per-file lengths (diagnostics only; UI prefers `effectiveKeywordLengths`).
+    'keywordLengths': ws == null
+        ? const <String, int>{}
+        : ws.keywords.map((k, v) => MapEntry(k, v.length)),
+    // For every active locale, the length of what we'll actually send to
+    // Apple — the locale's own value if present, else the default-language
+    // fallback. This is what the upload payload will be, so validation
+    // against Apple's 100-char keyword limit must use these numbers.
+    'effectiveKeywordLengths': _effectiveKeywordLengths(),
+    // Per-field list of locales that DO NOT have their own translation
+    // and will use the default-language fallback instead. Non-blocking
+    // info for the UI to warn about.
+    'fallbackUsage': _fallbackUsage(),
+    'defaultLanguage': ws?.config.defaultLanguage ?? 'en-US',
     'forcefulReplace': _orch?.forcefulReplace ?? true,
     'replaceOnMismatch': _orch?.replaceOnMismatch ?? true,
     'liveUpdateMode': _orch?.liveUpdateMode ?? false,
@@ -305,6 +361,9 @@ Future<void> _handleSetOptions(HttpRequest req) async {
   }
   if (data.containsKey('liveUpdateMode')) {
     _orch!.liveUpdateMode = data['liveUpdateMode'] as bool;
+  }
+  if (data.containsKey('localeSet')) {
+    _orch!.useLocaleSet(data['localeSet'].toString());
   }
   await _json(req, _statusSnapshot());
 }

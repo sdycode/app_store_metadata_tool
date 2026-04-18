@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../models/asc_resource.dart';
+import 'app_info_service.dart';
 import 'app_service.dart';
 import 'asc_client.dart';
 import 'auth.dart';
@@ -16,6 +17,22 @@ import 'validation_service.dart';
 import 'version_service.dart';
 import 'workspace.dart';
 
+/// Built-in locale presets. The UI forces the user to pick one of these two
+/// sets regardless of what's declared in config.json. Uploads and screenshot
+/// sync run against the selected set; missing locale data falls back to
+/// default_language (typically en-US) as the rest of the pipeline already does.
+const List<String> kLocaleSet15 = [
+  'en-US', 'ja', 'en-GB', 'de-DE', 'fr-FR', 'en-AU', 'en-CA', 'nl-NL',
+  'hi', 'no', 'da', 'fi', 'it', 'es-ES', 'ko',
+];
+
+const List<String> kLocaleSet39 = [
+  'ar-SA', 'ca', 'cs', 'da', 'de-DE', 'el', 'en-AU', 'en-CA', 'en-GB', 'en-US',
+  'es-ES', 'es-MX', 'fi', 'fr-CA', 'fr-FR', 'he', 'hi', 'hr', 'hu', 'id', 'it',
+  'ja', 'ko', 'ms', 'nl-NL', 'no', 'pl', 'pt-BR', 'pt-PT', 'ro', 'ru', 'sk',
+  'sv', 'th', 'tr', 'uk', 'vi', 'zh-Hans', 'zh-Hant',
+];
+
 class OrchestratorRuntime {
   final Workspace workspace;
   final AuthService auth;
@@ -25,6 +42,7 @@ class OrchestratorRuntime {
   final LocalizationService locs;
   final ScreenshotService screenshots;
   final IapService iap;
+  final AppInfoService appInfo;
   final ValidationService validator;
   final ResumeService resume;
 
@@ -37,6 +55,7 @@ class OrchestratorRuntime {
     required this.locs,
     required this.screenshots,
     required this.iap,
+    required this.appInfo,
     required this.validator,
     required this.resume,
   });
@@ -53,6 +72,7 @@ class OrchestratorRuntime {
       locs: LocalizationService(client),
       screenshots: ScreenshotService(client),
       iap: IapService(client),
+      appInfo: AppInfoService(client),
       validator: ValidationService(),
       resume: ResumeService(Directory(p.join(ws.root.path, '.asc_resume'))),
     );
@@ -66,6 +86,13 @@ class Orchestrator {
   final LoggingService _log = LoggingService.instance;
   final RunState control = RunState();
   Set<String> selectedLocales;
+
+  /// Which built-in locale set (15 or 39) is active. Supersedes config.
+  /// Auto-detected on construction from config.localizations.length; user
+  /// can switch via the UI radios.
+  List<String> activeLocaleSet;
+  String get activeLocaleSetName =>
+      activeLocaleSet.length == kLocaleSet39.length ? '39' : '15';
 
   /// Force wipe + re-upload all existing screenshots regardless of count.
   /// Both checkboxes default to true; user can toggle independently.
@@ -83,11 +110,31 @@ class Orchestrator {
   bool liveUpdateMode = false;
 
   Orchestrator(this.r)
-      : selectedLocales = Set<String>.from(r.workspace.config.localizations);
+      : activeLocaleSet = _autoPreset(r.workspace.config.localizations),
+        selectedLocales = Set<String>.from(
+            _autoPreset(r.workspace.config.localizations));
+
+  /// Pick the closer built-in preset based on how many locales the config
+  /// declares. Config with ~39 locales → 39-set; anything smaller → 15-set.
+  static List<String> _autoPreset(List<String> configLocales) {
+    return configLocales.length >= kLocaleSet39.length - 4
+        ? kLocaleSet39
+        : kLocaleSet15;
+  }
+
+  /// Switch preset at runtime (called from the UI radio). Resets
+  /// [selectedLocales] to the full new preset so the chips are consistent.
+  void useLocaleSet(String name) {
+    activeLocaleSet = name == '39' ? kLocaleSet39 : kLocaleSet15;
+    selectedLocales = Set<String>.from(activeLocaleSet);
+  }
 
   List<String> _effectiveLocales() {
-    final declared = r.workspace.config.localizations;
-    return declared.where(selectedLocales.contains).toList();
+    // SELECTED preset is the source of truth, not config.json. If config
+    // declares fewer locales, downstream services still attempt uploads for
+    // every selected locale — missing per-locale text falls back to
+    // default_language (usually en-US) as the rest of the pipeline does.
+    return activeLocaleSet.where(selectedLocales.contains).toList();
   }
 
   Future<T?> runGuarded<T>(String label, Future<T> Function() body) async {
@@ -167,6 +214,74 @@ class Orchestrator {
       _log.info(
           'Live Update mode: only whatsNew per locale was pushed',
           scope: 'orchestrator');
+    }
+
+    // App-level metadata (categories + per-locale name + privacyPolicyUrl).
+    // Runs in BOTH New Push and Live Update — the app name is App-level,
+    // not Version-level, so Apple won't auto-inherit it between versions.
+    // User explicitly asked to forcefully push it on every upload.
+    await _applyAppInfo(app.id, locales);
+  }
+
+  /// PATCHes the editable appInfo with primary category + per-locale name
+  /// + privacyPolicyUrl. Non-fatal — if a locale fails, the rest proceed.
+  Future<void> _applyAppInfo(String appId, List<String> locales) async {
+    final ws = r.workspace;
+    final meta = ws.config.metadata;
+    final primaryCategory = (meta.primaryCategory ?? '').trim();
+    final privacyUrl = (meta.privacyUrl ?? '').trim();
+    final defaultName = (meta.name ?? '').trim();
+    final specific = ws.config.specificNameLocales;
+
+    final hasName = defaultName.isNotEmpty || specific.isNotEmpty;
+    if (primaryCategory.isEmpty && privacyUrl.isEmpty && !hasName) {
+      _log.info('app-info: nothing to push (no name / category / privacy_url)',
+          scope: 'orchestrator');
+      return;
+    }
+
+    final AscResource appInfo;
+    try {
+      appInfo = await r.appInfo.findEditable(appId);
+    } catch (e) {
+      _log.error('app-info step skipped: $e', scope: 'orchestrator');
+      return;
+    }
+
+    if (primaryCategory.isNotEmpty) {
+      try {
+        await control.checkpoint();
+        await r.appInfo.patchCategories(
+          appInfo.id,
+          primaryCategory: primaryCategory,
+        );
+      } on CancelledException {
+        rethrow;
+      } catch (e) {
+        _log.error('category patch failed: $e', scope: 'orchestrator');
+      }
+    }
+
+    if (!hasName && privacyUrl.isEmpty) return;
+
+    for (final locale in locales) {
+      try {
+        await control.checkpoint();
+        final perLocale = specific[locale]?.trim();
+        final nameForLocale =
+            (perLocale != null && perLocale.isNotEmpty) ? perLocale : defaultName;
+        await r.appInfo.upsertLocalization(
+          appInfoId: appInfo.id,
+          locale: locale,
+          name: nameForLocale.isEmpty ? null : nameForLocale,
+          privacyPolicyUrl: privacyUrl.isEmpty ? null : privacyUrl,
+          control: control,
+        );
+      } on CancelledException {
+        rethrow;
+      } catch (e) {
+        _log.error('$locale appInfo loc failed: $e', scope: 'orchestrator');
+      }
     }
   }
 

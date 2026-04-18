@@ -105,12 +105,7 @@ class WorkspaceLoader {
       p8 = await _findP8(root, cfg.creds.keyId);
     }
 
-    Future<Map<String, String>> readLocaleMap(String name) async {
-      final f = File(p.join(root.path, name));
-      if (!await f.exists()) {
-        _log.warn('$name not found; treated as empty', scope: 'workspace');
-        return {};
-      }
+    Future<Map<String, String>> readOne(File f) async {
       try {
         final decoded = jsonDecode(await f.readAsString());
         if (decoded is Map) {
@@ -118,20 +113,36 @@ class WorkspaceLoader {
               .map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''));
         }
       } on FormatException catch (e) {
-        _log.warn('$name invalid JSON: ${e.message}', scope: 'workspace');
+        _log.warn('${p.basename(f.path)} invalid JSON: ${e.message}',
+            scope: 'workspace');
       }
       return {};
     }
 
-    final descriptions = await readLocaleMap('description.json');
-    final keywords = await readLocaleMap('keywords.json');
-    final subtitles = await readLocaleMap('subtitle.json');
-    // Accept either releasenotes.json or release_notes.json (user folders
-    // have been seen with both spellings). Whichever exists first wins; if
-    // both exist, merge with release_notes.json taking precedence.
-    final releaseNotesA = await readLocaleMap('releasenotes.json');
-    final releaseNotesB = await readLocaleMap('release_notes.json');
-    final releaseNotes = {...releaseNotesA, ...releaseNotesB};
+    /// Reads the first file in [candidates] that actually exists (case-
+    /// insensitive match against the folder). Only warns when none of them
+    /// is present — so e.g. having just `releasenotes.json` does NOT also
+    /// log "release_notes.json not found".
+    Future<Map<String, String>> readLocaleMap(List<String> candidates) async {
+      for (final name in candidates) {
+        final f = File(p.join(root.path, name));
+        if (await f.exists()) {
+          return readOne(f);
+        }
+      }
+      _log.warn(
+          '${candidates.join(" / ")} not found; treated as empty',
+          scope: 'workspace');
+      return {};
+    }
+
+    final descriptions = await readLocaleMap(['description.json']);
+    final keywords = await readLocaleMap(['keywords.json']);
+    final subtitles = await readLocaleMap(['subtitle.json']);
+    // Accept either spelling of the release-notes file. Whichever exists
+    // first wins; the other is not checked (no spurious "not found" warn).
+    final releaseNotes =
+        await readLocaleMap(['releasenotes.json', 'release_notes.json']);
 
     // Pre-flight sanity checks — non-blocking.
     final warnings = <String>[];
@@ -177,6 +188,33 @@ class WorkspaceLoader {
         : 'Live Update (update_version = "${cfg.metadata.updateVersion}")';
     _log.info('Mode expected from config.json → $expectedTab',
         scope: 'workspace');
+
+    // Coverage report — how many locales have their own translation vs
+    // will rely on the default-language fallback. Informational, not
+    // blocking. Keywords also shows the en-US length so a too-long
+    // en-US value (which propagates to every fallback locale) is visible.
+    final def = cfg.defaultLanguage;
+    void cov(String label, Map<String, String> data) {
+      final own = data.keys.toList()..sort();
+      _log.info(
+          '$label.json: ${own.length} locale(s) have own value → ${own.join(', ')}'
+          '${data.containsKey(def) ? '' : '  [WARNING: $def missing — fallbacks will be empty!]'}',
+          scope: 'workspace');
+    }
+
+    cov('description', descriptions);
+    cov('keywords', keywords);
+    cov('subtitle', subtitles);
+    cov('releasenotes', releaseNotes);
+
+    final defKw = keywords[def] ?? '';
+    if (defKw.length > 100) {
+      _log.warn(
+          'keywords["$def"] is ${defKw.length} chars — because every locale '
+          'without its own keywords falls back to $def, ALL locales will be '
+          'rejected by Apple. Trim keywords.json["$def"] to ≤100 chars.',
+          scope: 'workspace');
+    }
 
     return Workspace(
       root: root,

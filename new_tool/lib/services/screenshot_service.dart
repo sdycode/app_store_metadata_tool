@@ -69,10 +69,16 @@ class ScreenshotService {
   Future<void> deleteShot(String id) =>
       client.delete('/v1/appScreenshots/$id');
 
-  String detectDisplayType(int width, int height) {
+  /// Maps a PNG/JPG resolution to Apple's screenshotDisplayType enum.
+  /// Accepts both portrait and landscape orientations for each known size.
+  /// Returns null when the resolution isn't recognized — callers must skip
+  /// those files instead of uploading to a guessed display type (Apple
+  /// rejects mismatched dimensions with IMAGE_INCORRECT_DIMENSIONS).
+  String? detectDisplayType(int width, int height) {
     final long = width > height ? width : height;
     final short = width > height ? height : width;
 
+    // iPhone
     if (long == 2868 && short == 1320) return 'APP_IPHONE_69';
     if (long == 2796 && short == 1290) return 'APP_IPHONE_67';
     if (long == 2778 && short == 1284) return 'APP_IPHONE_67';
@@ -81,14 +87,13 @@ class ScreenshotService {
     if (long == 2208 && short == 1242) return 'APP_IPHONE_55';
     if (long == 1334 && short == 750) return 'APP_IPHONE_47';
     if (long == 1136 && short == 640) return 'APP_IPHONE_40';
+    // iPad
     if (long == 2732 && short == 2048) return 'APP_IPAD_PRO_3GEN_129';
-    if (long == 2064 && short == 2752) return 'APP_IPAD_PRO_129';
+    if (long == 2752 && short == 2064) return 'APP_IPAD_PRO_129';
     if (long == 2388 && short == 1668) return 'APP_IPAD_PRO_3GEN_11';
     if (long == 2224 && short == 1668) return 'APP_IPAD_105';
     if (long == 2048 && short == 1536) return 'APP_IPAD_97';
-    _log.warn('Unknown screenshot size ${width}x$height → APP_IPHONE_67',
-        scope: 'screenshot');
-    return 'APP_IPHONE_67';
+    return null;
   }
 
   Map<String, int>? _readImageSize(Uint8List bytes) {
@@ -179,6 +184,7 @@ class ScreenshotService {
     await control?.checkpoint();
     final dir = _resolveLocaleDir(workspace, locale);
     final localFiles = _listLocalShots(dir);
+    final sourceFolder = p.basename(dir.path);
 
     if (localFiles.isEmpty) {
       _log.info('$locale: no local screenshots; keeping existing',
@@ -199,8 +205,21 @@ class ScreenshotService {
         continue;
       }
       final displayType = detectDisplayType(size['width']!, size['height']!);
+      if (displayType == null) {
+        // Don't upload to a guessed display type — Apple rejects with
+        // IMAGE_INCORRECT_DIMENSIONS. Log loudly so the user knows WHY
+        // this file was skipped, and continue with the rest (per the
+        // requirement: do NOT stop the run just because one file is bad).
+        _log.warn(
+            '$locale ← $sourceFolder/$name ${size['width']}x${size['height']}: '
+            'UNSUPPORTED resolution — skipping this file. '
+            'Accepted iPhone sizes: 1242x2688, 1284x2778, 1290x2796, 1320x2868 '
+            '(and their landscape rotations).',
+            scope: 'screenshot');
+        continue;
+      }
       _log.info(
-          '$locale: $name ${size['width']}x${size['height']} → $displayType',
+          '$locale ← $sourceFolder/$name ${size['width']}x${size['height']} → $displayType',
           scope: 'screenshot');
       groups.putIfAbsent(displayType, () => []).add(f);
     }

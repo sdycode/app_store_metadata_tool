@@ -248,6 +248,20 @@ button.link {
 }
 .actions .btn { font-size: 12px; }
 
+/* Per-field card — slightly smaller buttons + a title row so users
+   perceive it as a secondary toolkit next to the main action buttons. */
+.actions.per-field {
+  gap: 6px;
+}
+.actions.per-field .section-head {
+  width: 100%;
+  margin-bottom: 2px;
+}
+.actions.per-field .btn {
+  font-size: 11.5px;
+  padding: 5px 9px;
+}
+
 .run-bar {
   display: flex;
   align-items: center;
@@ -275,6 +289,118 @@ button.link {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.extracted-card {
+  border-bottom: 1px solid var(--border);
+  background: #fbfbfd;
+  flex-shrink: 0;
+  max-height: 40%;
+  overflow-y: auto;
+}
+.extracted-card > summary {
+  padding: 8px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  user-select: none;
+  position: sticky;
+  top: 0;
+  background: #fbfbfd;
+  border-bottom: 1px solid var(--border);
+}
+.extracted-card > summary::-webkit-details-marker { display: none; }
+.extracted-card > summary::before {
+  content: '▸';
+  font-size: 10px;
+  color: var(--dim);
+  transition: transform 0.15s;
+}
+.extracted-card[open] > summary::before { transform: rotate(90deg); }
+.extracted-card .ex-icon { font-size: 14px; }
+.extracted-body {
+  padding: 8px 14px 12px;
+  font-size: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 18px;
+}
+.ex-section {
+  min-width: 0;
+}
+.ex-section:last-child {
+  grid-column: 1 / -1;
+}
+.ex-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  border-bottom: 1px dashed var(--border);
+  padding-bottom: 2px;
+}
+.ex-row {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+  align-items: flex-start;
+}
+.ex-k {
+  width: 100px;
+  flex-shrink: 0;
+  color: var(--dim);
+  font-weight: 500;
+}
+.ex-v {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+.ex-v a { color: var(--accent); text-decoration: none; }
+.ex-v a:hover { text-decoration: underline; }
+.ex-v .bad {
+  color: var(--error);
+  text-decoration: line-through;
+  font-style: italic;
+}
+.ex-multiline {
+  white-space: pre-wrap;
+  max-height: 80px;
+  overflow-y: auto;
+  padding: 4px 6px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.ex-v code {
+  background: #f0f0f2;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+}
+.ex-iap-list {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.ex-iap-list li { margin-bottom: 4px; }
+.ex-pill {
+  display: inline-block;
+  padding: 1px 6px;
+  margin: 0 3px;
+  background: #e8eaf6;
+  color: var(--accent);
+  border-radius: 10px;
+  font-size: 10.5px;
+  font-weight: 500;
 }
 .logs-toolbar {
   display: flex;

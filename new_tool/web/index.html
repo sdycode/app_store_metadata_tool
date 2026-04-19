@@ -200,9 +200,34 @@
         <button data-action="/action/check-screenshots" class="btn">📷 Check SS</button>
         <button data-action="/action/check-status" class="btn">👁 Check Status</button>
       </section>
+
+      <section class="card actions per-field">
+        <div class="section-head">
+          <strong>Update individual fields</strong>
+          <span class="dim">— push one attribute at a time (respects selected locales)</span>
+        </div>
+        <button data-action="/action/update-name" class="btn">🏷 Name</button>
+        <button data-action="/action/update-description" class="btn">📝 Description</button>
+        <button data-action="/action/update-keywords" class="btn">🔖 Keywords</button>
+        <button data-action="/action/update-subtitle" class="btn">📋 Subtitle</button>
+        <button data-action="/action/update-release-notes" class="btn">📢 Release Notes</button>
+        <button data-action="/action/update-marketing-url" class="btn">🔗 Marketing URL</button>
+        <button data-action="/action/update-support-url" class="btn">🛠 Support URL</button>
+        <button data-action="/action/update-privacy-url" class="btn">🔒 Privacy URL</button>
+        <button data-action="/action/update-copyright" class="btn">© Copyright</button>
+        <button data-action="/action/update-category" class="btn">📂 Category</button>
+      </section>
     </aside>
 
     <section id="logs">
+      <details id="extracted-card" class="extracted-card hidden" open>
+        <summary>
+          <span class="ex-icon">📋</span>
+          <strong>Extracted details</strong>
+          <span class="dim" id="extracted-subtitle">— config.json preview</span>
+        </summary>
+        <div id="extracted-body" class="extracted-body"></div>
+      </details>
       <div class="logs-toolbar">
         <strong>Logs</strong>
         <span id="log-count" class="dim">(0/0)</span>

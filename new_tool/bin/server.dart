@@ -154,6 +154,39 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
         case '/action/upload-all':
           await _runAction(req, 'Upload All', _orch!.uploadAll);
           return;
+        case '/action/update-name':
+          await _runAction(req, 'Update Name', _orch!.updateAppName);
+          return;
+        case '/action/update-description':
+          await _runAction(
+              req, 'Update Description', _orch!.updateDescription);
+          return;
+        case '/action/update-keywords':
+          await _runAction(req, 'Update Keywords', _orch!.updateKeywords);
+          return;
+        case '/action/update-subtitle':
+          await _runAction(req, 'Update Subtitle', _orch!.updateSubtitle);
+          return;
+        case '/action/update-release-notes':
+          await _runAction(
+              req, 'Update Release Notes', _orch!.updateReleaseNotes);
+          return;
+        case '/action/update-marketing-url':
+          await _runAction(
+              req, 'Update Marketing URL', _orch!.updateMarketingUrl);
+          return;
+        case '/action/update-support-url':
+          await _runAction(req, 'Update Support URL', _orch!.updateSupportUrl);
+          return;
+        case '/action/update-privacy-url':
+          await _runAction(req, 'Update Privacy URL', _orch!.updatePrivacyUrl);
+          return;
+        case '/action/update-copyright':
+          await _runAction(req, 'Update Copyright', _orch!.updateCopyright);
+          return;
+        case '/action/update-category':
+          await _runAction(req, 'Update Category', _orch!.updatePrimaryCategory);
+          return;
         case '/action/check-status':
           await _runAction(req, 'Check Status', () async {
             final report = await _orch!.checkStatus();
@@ -239,6 +272,54 @@ Map<String, List<String>> _fallbackUsage() {
   return missing;
 }
 
+/// Builds a compact summary of everything the tool will push — shown at
+/// the top of the log panel so the user can eyeball the payload before
+/// clicking Upload. en-US values are used for preview fields.
+Map<String, dynamic> _extractedSummary(Workspace ws) {
+  final meta = ws.config.metadata;
+  final def = ws.config.defaultLanguage;
+  String? pick(Map<String, String> m) => m['en-US'] ?? m[def];
+  final iaps = (ws.config.inApp?.iapMetadata ?? const [])
+      .map((iap) => {
+            'product_id': iap.productId,
+            'reference_name': iap.referenceName,
+            'purchase_type': iap.purchaseType,
+            'family_sharable': iap.familySharable,
+            'price_point': iap.pricing?.pricePoint ?? '',
+            'territory': iap.pricing?.territory ?? '',
+            'localizations': iap.localizations
+                .map((l) => {'locale': l.locale, 'name': l.name})
+                .toList(),
+            'review_notes': iap.reviewNotes,
+          })
+      .toList();
+  return {
+    'name': meta.name ?? '',
+    'package_id': meta.packageId,
+    'app_id': meta.appId,
+    'email': meta.email ?? '',
+    'primary_category': meta.primaryCategory ?? '',
+    'copyright': meta.copyright ?? '',
+    'update_version': meta.updateVersion,
+    'urls': {
+      'marketing': meta.marketingUrl ?? '',
+      'support': meta.supportUrl ?? '',
+      'privacy': meta.privacyUrl ?? '',
+    },
+    // en-US previews of each text field (empty string if neither en-US nor
+    // default_language has it).
+    'en_us': {
+      'description': pick(ws.descriptions) ?? '',
+      'keywords': pick(ws.keywords) ?? '',
+      'subtitle': pick(ws.subtitles) ?? '',
+      'release_notes': pick(ws.releaseNotes) ?? '',
+    },
+    'iap_count': iaps.length,
+    'iaps': iaps,
+    'review_image_path': ws.config.inApp?.reviewImagePath ?? '',
+  };
+}
+
 Map<String, dynamic> _statusSnapshot() {
   final ws = _orch?.r.workspace;
   return {
@@ -273,6 +354,11 @@ Map<String, dynamic> _statusSnapshot() {
     // info for the UI to warn about.
     'fallbackUsage': _fallbackUsage(),
     'defaultLanguage': ws?.config.defaultLanguage ?? 'en-US',
+    // Human-readable summary of what's extracted from the workspace — used
+    // by the "Extracted details" card at the top of the log panel so the
+    // user can eyeball exactly what the tool will push before clicking any
+    // upload button.
+    'extracted': ws == null ? null : _extractedSummary(ws),
     'forcefulReplace': _orch?.forcefulReplace ?? true,
     'replaceOnMismatch': _orch?.replaceOnMismatch ?? true,
     'liveUpdateMode': _orch?.liveUpdateMode ?? false,

@@ -368,6 +368,7 @@ function applyStatus(s) {
     renderKeywordBlock();
     renderFallbackUsage();
     renderMismatch();
+    renderExtracted(s.extracted);
     updateActionGate();
   }
   state.controlState = s.control || state.controlState;
@@ -499,6 +500,97 @@ function renderKeywordBlock() {
       'Trim the following locale(s) in <code>keywords.json</code> ' +
       '(locales marked "inherited" fall back to <code>' + state.defaultLanguage + '</code> — ' +
       'fixing that one entry resolves them all):<ul>' + rows + '</ul>';
+}
+
+/// Renders the "Extracted details" card at the top of the log panel —
+/// a compact preview of what will actually hit Apple's API when the
+/// upload buttons are clicked. Uses en-US values for the textual
+/// previews.
+function renderExtracted(ex) {
+  const card = document.getElementById('extracted-card');
+  const body = document.getElementById('extracted-body');
+  if (!card || !body) return;
+  if (!ex) {
+    card.classList.add('hidden');
+    return;
+  }
+  card.classList.remove('hidden');
+  const clip = (s, n) => {
+    if (!s) return '—';
+    if (s.length <= n) return s;
+    return s.slice(0, n) + '…';
+  };
+  const htmlEscape = (s) =>
+      String(s).replace(/[&<>"']/g, (c) =>
+          ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const urlOrDash = (u) => {
+    if (!u) return '—';
+    const safe = htmlEscape(u);
+    if (/^https?:\/\//i.test(u)) {
+      return `<a href="${safe}" target="_blank" rel="noopener">${safe}</a>`;
+    }
+    return `<span class="bad">${safe}</span>`;
+  };
+  const kv = (k, v) =>
+      `<div class="ex-row"><div class="ex-k">${k}</div><div class="ex-v">${v}</div></div>`;
+  const section = (title, rows) =>
+      `<div class="ex-section"><div class="ex-title">${title}</div>${rows.join('')}</div>`;
+
+  const enUS = ex.en_us || {};
+  const urls = ex.urls || {};
+
+  const appInfo = section('App info', [
+    kv('Name', htmlEscape(ex.name || '—')),
+    kv('Bundle / App ID', `${htmlEscape(ex.package_id || '')} <span class="dim">/ ${htmlEscape(ex.app_id || '')}</span>`),
+    kv('Category', htmlEscape(ex.primary_category || '—')),
+    kv('Copyright', htmlEscape(ex.copyright || '—')),
+    kv('Update version', ex.update_version ? htmlEscape(ex.update_version) : '<span class="dim">(editable)</span>'),
+    kv('Contact', htmlEscape(ex.email || '—')),
+  ]);
+
+  const urlBlock = section('URLs', [
+    kv('Marketing', urlOrDash(urls.marketing)),
+    kv('Support', urlOrDash(urls.support)),
+    kv('Privacy', urlOrDash(urls.privacy)),
+  ]);
+
+  const contentBlock = section('en-US content preview', [
+    kv('Subtitle', htmlEscape(enUS.subtitle || '—')),
+    kv('Keywords', `<code>${htmlEscape(enUS.keywords || '—')}</code>`),
+    kv('Description', `<div class="ex-multiline">${htmlEscape(clip(enUS.description, 400))}</div>`),
+    kv('Release notes', `<div class="ex-multiline">${htmlEscape(clip(enUS.release_notes, 400))}</div>`),
+  ]);
+
+  const iapRows = (ex.iaps || []).map((iap) => {
+    const localesText = (iap.localizations || [])
+        .map((l) => `${l.locale}: ${l.name}`)
+        .join(' · ');
+    return `<li>
+      <b>${htmlEscape(iap.product_id || '')}</b>
+      <span class="dim">${htmlEscape(iap.reference_name || '')}</span>
+      <span class="ex-pill">${htmlEscape(iap.purchase_type || '')}</span>
+      ${iap.family_sharable ? '<span class="ex-pill">family</span>' : ''}
+      <span class="ex-pill">$${htmlEscape(iap.price_point || '?')} ${htmlEscape(iap.territory || '')}</span>
+      ${localesText ? `<div class="dim">${htmlEscape(localesText)}</div>` : ''}
+    </li>`;
+  }).join('');
+  const iapBlock = section(
+      `In-app purchases (${ex.iap_count || 0})`,
+      [
+        (ex.iap_count ?? 0) === 0
+            ? '<div class="ex-row"><div class="ex-v dim">none declared</div></div>'
+            : `<ul class="ex-iap-list">${iapRows}</ul>`,
+        ex.review_image_path
+            ? kv('Review image', `<code>${htmlEscape(ex.review_image_path)}</code>`)
+            : '',
+      ]);
+
+  body.innerHTML = appInfo + urlBlock + contentBlock + iapBlock;
+  const subtitle = document.getElementById('extracted-subtitle');
+  if (subtitle) {
+    subtitle.textContent =
+        `— ${ex.update_version ? 'v' + ex.update_version : 'editable version'}`;
+  }
 }
 
 /// Non-blocking info card listing locales that lack own translations for

@@ -68,6 +68,37 @@ class VersionService {
     return res;
   }
 
+  /// Patch version-level attributes (copyright, releaseType). No-op when
+  /// every field is empty. Used by the individual `Update Copyright` button.
+  Future<AscResource> patchMetadata({
+    required String versionId,
+    String? copyright,
+    String? releaseType,
+  }) async {
+    final attrs = <String, dynamic>{};
+    if (copyright != null && copyright.isNotEmpty) {
+      attrs['copyright'] = copyright;
+    }
+    if (releaseType != null && releaseType.isNotEmpty) {
+      attrs['releaseType'] = releaseType;
+    }
+    if (attrs.isEmpty) {
+      return AscResource(
+          id: versionId,
+          type: 'appStoreVersions',
+          attributes: const {},
+          relationships: const {});
+    }
+    final json = await client.patchJson('/v1/appStoreVersions/$versionId', {
+      'data': {
+        'id': versionId,
+        'type': 'appStoreVersions',
+        'attributes': attrs,
+      },
+    });
+    return AscResource.fromJson(json['data'] as Map<String, dynamic>);
+  }
+
   Future<AscResource> getOrCreate(
       {required String appId, required String updateVersion}) async {
     if (updateVersion.isEmpty) {

@@ -111,9 +111,11 @@ class LocalizationService {
     required Workspace workspace,
     RunState? control,
     // When true (Live Update tab), push only the `whatsNew` attribute and
-    // leave description / keywords / subtitle / URLs untouched, as those
-    // carry over from the previously shipped version.
+    // leave description / keywords / subtitle / URLs untouched.
     bool onlyWhatsNew = false,
+    // When non-null, PATCH only these attribute keys — used by per-field
+    // update buttons. Supersedes [onlyWhatsNew] when both are provided.
+    Set<String>? onlyFields,
   }) async {
     await control?.checkpoint();
     final fallback = workspace.config.defaultLanguage;
@@ -124,11 +126,17 @@ class LocalizationService {
           id: '', type: '', attributes: const {}, relationships: const {}),
     );
     final full = _attrsFor(workspace, locale, fallback);
-    final attrs = onlyWhatsNew
-        ? (full.containsKey('whatsNew')
-            ? <String, dynamic>{'whatsNew': full['whatsNew']}
-            : <String, dynamic>{})
-        : full;
+    Map<String, dynamic> attrs;
+    if (onlyFields != null) {
+      attrs = Map.fromEntries(
+          full.entries.where((e) => onlyFields.contains(e.key)));
+    } else if (onlyWhatsNew) {
+      attrs = full.containsKey('whatsNew')
+          ? <String, dynamic>{'whatsNew': full['whatsNew']}
+          : <String, dynamic>{};
+    } else {
+      attrs = full;
+    }
 
     if (found.id.isNotEmpty) {
       if (attrs.isEmpty) {

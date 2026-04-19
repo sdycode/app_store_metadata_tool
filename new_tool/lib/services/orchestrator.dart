@@ -285,6 +285,155 @@ class Orchestrator {
     }
   }
 
+  // =====================================================================
+  // Per-field update entry points. Each button in the UI hits one of these
+  // so the uploader can push just a single attribute across all selected
+  // locales, without touching the rest.
+  // =====================================================================
+
+  Future<void> _runPerLocaleVersionField(
+      String attrKey, String label) async {
+    final ws = r.workspace;
+    final locales = _effectiveLocales();
+    if (locales.isEmpty) {
+      _log.warn('No locales selected; nothing to upload', scope: 'orchestrator');
+      return;
+    }
+    final app = await r.apps.requireByBundleId(ws.config.metadata.packageId);
+    final version = await r.versions.getOrCreate(
+      appId: app.id,
+      updateVersion: ws.config.metadata.updateVersion,
+    );
+    _log.info('▶ update $label → ${locales.length} locale(s)',
+        scope: 'orchestrator');
+    for (final locale in locales) {
+      try {
+        await control.checkpoint();
+        await r.locs.upsert(
+          versionId: version.id,
+          locale: locale,
+          workspace: ws,
+          control: control,
+          onlyFields: {attrKey},
+        );
+      } on CancelledException {
+        rethrow;
+      } catch (e) {
+        _log.error('$locale $label failed: $e', scope: 'orchestrator');
+      }
+    }
+  }
+
+  Future<void> updateDescription() =>
+      _runPerLocaleVersionField('description', 'description');
+  Future<void> updateKeywords() =>
+      _runPerLocaleVersionField('keywords', 'keywords');
+  Future<void> updateSubtitle() =>
+      _runPerLocaleVersionField('subtitle', 'subtitle');
+  Future<void> updateReleaseNotes() =>
+      _runPerLocaleVersionField('whatsNew', 'release notes');
+  Future<void> updateMarketingUrl() =>
+      _runPerLocaleVersionField('marketingUrl', 'marketing URL');
+  Future<void> updateSupportUrl() =>
+      _runPerLocaleVersionField('supportUrl', 'support URL');
+
+  /// Version-level copyright (single PATCH on the version, not per-locale).
+  Future<void> updateCopyright() async {
+    final ws = r.workspace;
+    final copyright = (ws.config.metadata.copyright ?? '').trim();
+    if (copyright.isEmpty) {
+      _log.warn('copyright is empty in config.json; nothing to push',
+          scope: 'orchestrator');
+      return;
+    }
+    final app = await r.apps.requireByBundleId(ws.config.metadata.packageId);
+    final version = await r.versions.getOrCreate(
+      appId: app.id,
+      updateVersion: ws.config.metadata.updateVersion,
+    );
+    try {
+      await r.versions.patchMetadata(
+          versionId: version.id, copyright: copyright);
+      _log.success('copyright set to "$copyright"', scope: 'orchestrator');
+    } catch (e) {
+      _log.error('copyright patch failed: $e', scope: 'orchestrator');
+    }
+  }
+
+  /// App-name per selected locale (AppInfoLocalization.name).
+  Future<void> updateAppName() async {
+    await _applyAppInfoSubset(includeName: true);
+  }
+
+  /// Privacy policy URL per selected locale (AppInfoLocalization.privacyPolicyUrl).
+  Future<void> updatePrivacyUrl() async {
+    await _applyAppInfoSubset(includePrivacyUrl: true);
+  }
+
+  /// Primary category on the app-level appInfo (once, not per-locale).
+  Future<void> updatePrimaryCategory() async {
+    final ws = r.workspace;
+    final cat = (ws.config.metadata.primaryCategory ?? '').trim();
+    if (cat.isEmpty) {
+      _log.warn('primary_category is empty in config.json; nothing to push',
+          scope: 'orchestrator');
+      return;
+    }
+    final app = await r.apps.requireByBundleId(ws.config.metadata.packageId);
+    try {
+      final appInfo = await r.appInfo.findEditable(app.id);
+      await r.appInfo
+          .patchCategories(appInfo.id, primaryCategory: cat);
+    } catch (e) {
+      _log.error('primary-category update failed: $e', scope: 'orchestrator');
+    }
+  }
+
+  Future<void> _applyAppInfoSubset({
+    bool includeName = false,
+    bool includePrivacyUrl = false,
+  }) async {
+    final ws = r.workspace;
+    final meta = ws.config.metadata;
+    final defaultName = (meta.name ?? '').trim();
+    final privacyUrl = (meta.privacyUrl ?? '').trim();
+    final specific = ws.config.specificNameLocales;
+    final locales = _effectiveLocales();
+    if (locales.isEmpty) {
+      _log.warn('No locales selected; nothing to upload',
+          scope: 'orchestrator');
+      return;
+    }
+    final app = await r.apps.requireByBundleId(ws.config.metadata.packageId);
+    final appInfo = await r.appInfo.findEditable(app.id);
+    for (final locale in locales) {
+      try {
+        await control.checkpoint();
+        String? nameForLocale;
+        if (includeName) {
+          final perLocale = specific[locale]?.trim();
+          nameForLocale = (perLocale != null && perLocale.isNotEmpty)
+              ? perLocale
+              : defaultName;
+          if (nameForLocale.isEmpty) nameForLocale = null;
+        }
+        await r.appInfo.upsertLocalization(
+          appInfoId: appInfo.id,
+          locale: locale,
+          name: nameForLocale,
+          privacyPolicyUrl: includePrivacyUrl && privacyUrl.isNotEmpty
+              ? privacyUrl
+              : null,
+          control: control,
+        );
+      } on CancelledException {
+        rethrow;
+      } catch (e) {
+        _log.error('$locale appInfo loc failed: $e', scope: 'orchestrator');
+      }
+    }
+  }
+
   Future<void> uploadScreenshots() async {
     final ws = r.workspace;
     final locales = _effectiveLocales();

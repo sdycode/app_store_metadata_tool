@@ -60,7 +60,38 @@ const el = (tag, attrs = {}, ...children) => {
   return node;
 };
 
+// ---- Theme ---------------------------------------------------------------
+const THEME_STORAGE_KEY = 'metadata-uploader-theme';
+
+function applyTheme(theme, persist) {
+  const next = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = next;
+  document.querySelectorAll('[data-theme-choice]').forEach((button) => {
+    const active = button.dataset.themeChoice === next;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch (_) {}
+  }
+}
+
+function initialTheme() {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light';
+  } catch (_) {
+    return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+  }
+}
+
 // ---- Wire initial UI ------------------------------------------------------
+applyTheme(initialTheme(), false);
+document.querySelectorAll('[data-theme-choice]').forEach((button) => {
+  button.addEventListener('click', () => applyTheme(button.dataset.themeChoice, true));
+});
+
 $('#btn-pick-folder').addEventListener('click', () => $('#folder-input').click());
 $('#folder-input').addEventListener('change', onFolderPicked);
 $('#btn-pick-key').addEventListener('click', () => $('#key-file-input').click());

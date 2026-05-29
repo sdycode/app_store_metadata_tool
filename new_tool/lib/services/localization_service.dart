@@ -17,6 +17,13 @@ class LocalizationService {
     return items.map(AscResource.fromJson).toList();
   }
 
+  Future<AscResource> get(String localizationId) async {
+    final json = await client.getJson(
+      '/v1/appStoreVersionLocalizations/$localizationId',
+    );
+    return AscResource.fromJson(json['data'] as Map<String, dynamic>);
+  }
+
   Map<String, dynamic> _attrsFor(
     Workspace ws,
     String locale,
@@ -120,6 +127,41 @@ class LocalizationService {
     throw StateError('$locale: exceeded retry budget on locked attributes');
   }
 
+  Future<AscResource> _verifyFields({
+    required String locId,
+    required String locale,
+    required Map<String, dynamic> expected,
+    required AscResource fallback,
+  }) async {
+    try {
+      final latest = await get(locId);
+      final mismatches = <String>[];
+      for (final entry in expected.entries) {
+        final expectedValue = entry.value?.toString() ?? '';
+        final actualValue = latest.attributes[entry.key]?.toString() ?? '';
+        if (actualValue != expectedValue) {
+          mismatches.add(
+              '${entry.key}: sent=${expectedValue.length} chars, remote=${actualValue.length} chars');
+        }
+      }
+      if (mismatches.isEmpty) {
+        _log.success(
+            '$locale: ${expected.keys.join(', ')} updated and verified on ASC',
+            scope: 'locale');
+      } else {
+        _log.warn(
+            '$locale: PATCH accepted, but ASC read-back does not match (${mismatches.join('; ')})',
+            scope: 'locale');
+      }
+      return latest;
+    } catch (e) {
+      _log.warn(
+          '$locale: PATCH accepted, but verification read-back failed: $e',
+          scope: 'locale');
+      return fallback;
+    }
+  }
+
   Future<AscResource> upsert({
     required String versionId,
     required String locale,
@@ -170,8 +212,18 @@ class LocalizationService {
       }
       final json = await _patchWithRetry(found.id, attrs, locale);
       if (json.isEmpty) return found;
+      final updated =
+          AscResource.fromJson(json['data'] as Map<String, dynamic>);
+      if (onlyFields != null) {
+        return _verifyFields(
+          locId: found.id,
+          locale: locale,
+          expected: attrs,
+          fallback: updated,
+        );
+      }
       _log.success('$locale: metadata updated', scope: 'locale');
-      return AscResource.fromJson(json['data'] as Map<String, dynamic>);
+      return updated;
     }
 
     final body = {
@@ -189,7 +241,16 @@ class LocalizationService {
       },
     };
     final json = await _postWithRetry(body, locale);
+    final created = AscResource.fromJson(json['data'] as Map<String, dynamic>);
+    if (onlyFields != null && created.id.isNotEmpty) {
+      return _verifyFields(
+        locId: created.id,
+        locale: locale,
+        expected: attrs,
+        fallback: created,
+      );
+    }
     _log.success('$locale: metadata created', scope: 'locale');
-    return AscResource.fromJson(json['data'] as Map<String, dynamic>);
+    return created;
   }
 }

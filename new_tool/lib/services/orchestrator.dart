@@ -218,6 +218,11 @@ class Orchestrator {
       _log.info(
           'Live Update mode: only whatsNew per locale was pushed',
           scope: 'orchestrator');
+      if (forcefulIndividualUpdate) {
+        _log.warn(
+            'Forcefull Update applies only to the individual field buttons; Upload Metadata still pushes only release notes in Live Update mode',
+            scope: 'orchestrator');
+      }
     }
 
     // App-level metadata (categories + per-locale name + privacyPolicyUrl).
@@ -308,6 +313,11 @@ class Orchestrator {
       appId: app.id,
       updateVersion: ws.config.metadata.updateVersion,
     );
+    _log.info(
+        'target version ${version.attributes['versionString'] ?? '(unknown)'} '
+        '(id=${version.id}, state=${version.attributes['appStoreState'] ?? version.attributes['appVersionState'] ?? 'unknown'}, '
+        'forcefull=${forcefulIndividualUpdate ? 'on' : 'off'})',
+        scope: 'orchestrator');
     _log.info('▶ update $label → ${locales.length} locale(s)',
         scope: 'orchestrator');
     for (final locale in locales) {

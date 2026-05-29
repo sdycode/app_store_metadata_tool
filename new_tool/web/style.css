@@ -129,6 +129,17 @@ header h1 {
   font-size: 16px;
   font-weight: 600;
 }
+.version-tag {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-soft);
+  color: var(--dim);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
 .theme-switch {
   display: inline-flex;
   align-items: center;

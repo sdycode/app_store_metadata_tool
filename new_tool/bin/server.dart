@@ -361,6 +361,7 @@ Map<String, dynamic> _statusSnapshot() {
     'extracted': ws == null ? null : _extractedSummary(ws),
     'forcefulReplace': _orch?.forcefulReplace ?? true,
     'replaceOnMismatch': _orch?.replaceOnMismatch ?? true,
+    'forcefulIndividualUpdate': _orch?.forcefulIndividualUpdate ?? false,
     'liveUpdateMode': _orch?.liveUpdateMode ?? false,
   };
 }
@@ -444,6 +445,9 @@ Future<void> _handleSetOptions(HttpRequest req) async {
   }
   if (data.containsKey('replaceOnMismatch')) {
     _orch!.replaceOnMismatch = data['replaceOnMismatch'] as bool;
+  }
+  if (data.containsKey('forcefulIndividualUpdate')) {
+    _orch!.forcefulIndividualUpdate = data['forcefulIndividualUpdate'] as bool;
   }
   if (data.containsKey('liveUpdateMode')) {
     _orch!.liveUpdateMode = data['liveUpdateMode'] as bool;

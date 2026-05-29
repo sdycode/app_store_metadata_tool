@@ -34,6 +34,8 @@ const state = {
   // app's "belt + braces" upload). Both apply in both tabs.
   forcefulReplace: true,
   replaceOnMismatch: true,
+  // Default-off knob for the individual field buttons only.
+  forcefulIndividualUpdate: false,
   nextLogIndex: 0,
   logs: [],
   enabledLevels: new Set(LEVELS),
@@ -60,7 +62,38 @@ const el = (tag, attrs = {}, ...children) => {
   return node;
 };
 
+// ---- Theme ---------------------------------------------------------------
+const THEME_STORAGE_KEY = 'metadata-uploader-theme';
+
+function applyTheme(theme, persist) {
+  const next = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = next;
+  document.querySelectorAll('[data-theme-choice]').forEach((button) => {
+    const active = button.dataset.themeChoice === next;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  if (persist) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch (_) {}
+  }
+}
+
+function initialTheme() {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY) === 'dark' ? 'dark' : 'light';
+  } catch (_) {
+    return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+  }
+}
+
 // ---- Wire initial UI ------------------------------------------------------
+applyTheme(initialTheme(), false);
+document.querySelectorAll('[data-theme-choice]').forEach((button) => {
+  button.addEventListener('click', () => applyTheme(button.dataset.themeChoice, true));
+});
+
 $('#btn-pick-folder').addEventListener('click', () => $('#folder-input').click());
 $('#folder-input').addEventListener('change', onFolderPicked);
 $('#btn-pick-key').addEventListener('click', () => $('#key-file-input').click());
@@ -85,6 +118,22 @@ $('#ss-replace-mismatch').addEventListener('change', (e) => {
   state.replaceOnMismatch = e.target.checked;
   postOptions();
 });
+$('#field-forceful-update').addEventListener('change', (e) => {
+  state.forcefulIndividualUpdate = e.target.checked;
+  postOptions();
+});
+
+document.querySelectorAll('input[name="locale-set"]').forEach((r) => {
+  r.addEventListener('change', async () => {
+    const picked = document.querySelector('input[name="locale-set"]:checked').value;
+    // Server-side switch resets selectedLocales; client re-syncs via /status.
+    await fetch('/options', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ localeSet: picked }),
+    });
+  });
+});
 
 document.querySelectorAll('[data-action]').forEach((b) => {
   b.addEventListener('click', () => {
@@ -101,14 +150,33 @@ document.querySelectorAll('[data-action]').forEach((b) => {
 document.querySelectorAll('[data-locale-op]').forEach((b) => {
   b.addEventListener('click', () => {
     if (!state.workspace) return;
-    const all = state.workspace.localizations;
+    // Use the ACTIVE locale set (the 15-or-39 preset the user picked),
+    // not config.json's list — the chips are rendered from activeLocaleSet,
+    // so "All" must select every rendered chip.
+    const all = state.activeLocaleSet || [];
     const op = b.dataset.localeOp;
     if (op === 'all') state.selectedLocales = new Set(all);
     else if (op === 'none') state.selectedLocales = new Set();
     else if (op === 'invert') {
       state.selectedLocales = new Set(all.filter((l) => !state.selectedLocales.has(l)));
+    } else if (op === 'toggle-regional') {
+      // Quick include/exclude of ar-SA, hi, zh-Hans, zh-Hant as a group —
+      // these 4 often need to be toggled together (different script, RTL,
+      // or distinct regional requirements).
+      const REGIONAL = ['ar-SA', 'hi', 'zh-Hans', 'zh-Hant'];
+      const relevant = REGIONAL.filter((l) => all.includes(l));
+      const allCurrentlySelected =
+          relevant.length > 0 &&
+          relevant.every((l) => state.selectedLocales.has(l));
+      if (allCurrentlySelected) {
+        relevant.forEach((l) => state.selectedLocales.delete(l));
+      } else {
+        relevant.forEach((l) => state.selectedLocales.add(l));
+      }
     }
     renderLocales();
+    renderKeywordBlock();
+    updateActionGate();
     postLocales();
   });
 });
@@ -235,6 +303,7 @@ async function uploadWorkspace() {
 // ---- Actions --------------------------------------------------------------
 async function runAction(path) {
   try {
+    await postOptions();
     const resp = await fetch(path, { method: 'POST' });
     if (resp.status === 400) alert('Pick a folder first.');
     if (resp.status === 409) alert('Another action is already running.');
@@ -260,6 +329,7 @@ async function postOptions() {
     body: JSON.stringify({
       forcefulReplace: state.forcefulReplace,
       replaceOnMismatch: state.replaceOnMismatch,
+      forcefulIndividualUpdate: state.forcefulIndividualUpdate,
       liveUpdateMode: state.tab === 'live-update',
     }),
   });
@@ -321,11 +391,28 @@ function applyStatus(s) {
     if (typeof s.replaceOnMismatch === 'boolean') {
       state.replaceOnMismatch = s.replaceOnMismatch;
     }
+    if (typeof s.forcefulIndividualUpdate === 'boolean') {
+      state.forcefulIndividualUpdate = s.forcefulIndividualUpdate;
+    }
     $('#ss-force-replace').checked = state.forcefulReplace;
     $('#ss-replace-mismatch').checked = state.replaceOnMismatch;
+    $('#field-forceful-update').checked = state.forcefulIndividualUpdate;
+    // Locale set + keyword data live on the top-level status payload.
+    state.activeLocaleSet = s.activeLocaleSet || [];
+    state.activeLocaleSetName = s.activeLocaleSetName || '15';
+    state.configLocaleCount = s.configLocaleCount || 0;
+    state.keywordLengths = s.keywordLengths || {};
+    state.effectiveKeywordLengths = s.effectiveKeywordLengths || {};
+    state.fallbackUsage = s.fallbackUsage || {};
+    state.defaultLanguage = s.defaultLanguage || 'en-US';
+    renderLocaleSetCard();
     renderLocales();
     renderWarnings(s.workspace.warnings || []);
+    renderKeywordBlock();
+    renderFallbackUsage();
     renderMismatch();
+    renderExtracted(s.extracted);
+    updateActionGate();
   }
   state.controlState = s.control || state.controlState;
   renderRunBar();
@@ -385,6 +472,198 @@ function setActionsEnabled(enabled) {
   });
 }
 
+/// Compound gate: actions are enabled only if NO blocking condition is
+/// active. Blocking conditions: tab↔version mismatch, keyword length >100.
+function updateActionGate() {
+  const tabMismatch = !$('#mismatch-card').classList.contains('hidden');
+  const keywordBlocked =
+      !$('#keyword-block').classList.contains('hidden');
+  setActionsEnabled(!tabMismatch && !keywordBlocked);
+}
+
+function renderLocaleSetCard() {
+  const card = $('#locale-set-card');
+  if (!state.workspace) {
+    card.classList.add('hidden');
+    return;
+  }
+  card.classList.remove('hidden');
+  const name = state.activeLocaleSetName || '15';
+  $('#locale-set-15').checked = name === '15';
+  $('#locale-set-39').checked = name === '39';
+
+  // Conflict message: compares the count the user picked to what config.json
+  // actually declares. Selection wins; this is purely advisory so the user
+  // can edit config or switch set if they want alignment.
+  const active = (state.activeLocaleSet || []).length;
+  const cfg = state.configLocaleCount || 0;
+  const hint = $('#locale-set-conflict');
+  if (active !== cfg && cfg > 0) {
+    hint.classList.remove('hidden');
+    hint.innerHTML =
+        `⚠ <b>config.json</b> declares <b>${cfg}</b> locale(s), but you selected the <b>${name}-locale</b> set (<b>${active}</b>). ` +
+        `Selection wins — uploads run for <b>${active}</b> locale(s); missing per-locale data falls back to <b>en-US</b>.`;
+  } else {
+    hint.classList.add('hidden');
+  }
+}
+
+function renderKeywordBlock() {
+  const card = $('#keyword-block');
+  const detail = $('#keyword-block-detail');
+  if (!state.workspace) {
+    card.classList.add('hidden');
+    return;
+  }
+  // Use EFFECTIVE lengths (own value OR default-language fallback) — a
+  // too-long en-US keyword set propagates to every locale that inherits
+  // via fallback, so the violation list must reflect that too.
+  const active = new Set(
+      (state.activeLocaleSet || []).filter((l) => state.selectedLocales.has(l)));
+  const effective = state.effectiveKeywordLengths || {};
+  const own = state.keywordLengths || {};
+  const violations = [];
+  for (const locale of active) {
+    const len = effective[locale] ?? 0;
+    if (len > 100) {
+      const hasOwn = Object.prototype.hasOwnProperty.call(own, locale);
+      violations.push({ locale, len, hasOwn });
+    }
+  }
+  if (violations.length === 0) {
+    card.classList.add('hidden');
+    return;
+  }
+  card.classList.remove('hidden');
+  const rows = violations
+      .map((v) => `<li><b>${v.locale}</b>: ${v.len} chars${v.hasOwn ? '' : ` (inherited from <b>${state.defaultLanguage}</b>)`}</li>`)
+      .join('');
+  detail.innerHTML =
+      'Apple rejects keywords longer than 100 characters. ' +
+      'Trim the following locale(s) in <code>keywords.json</code> ' +
+      '(locales marked "inherited" fall back to <code>' + state.defaultLanguage + '</code> — ' +
+      'fixing that one entry resolves them all):<ul>' + rows + '</ul>';
+}
+
+/// Renders the "Extracted details" card at the top of the log panel —
+/// a compact preview of what will actually hit Apple's API when the
+/// upload buttons are clicked. Uses en-US values for the textual
+/// previews.
+function renderExtracted(ex) {
+  const card = document.getElementById('extracted-card');
+  const body = document.getElementById('extracted-body');
+  if (!card || !body) return;
+  if (!ex) {
+    card.classList.add('hidden');
+    return;
+  }
+  card.classList.remove('hidden');
+  const clip = (s, n) => {
+    if (!s) return '—';
+    if (s.length <= n) return s;
+    return s.slice(0, n) + '…';
+  };
+  const htmlEscape = (s) =>
+      String(s).replace(/[&<>"']/g, (c) =>
+          ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const urlOrDash = (u) => {
+    if (!u) return '—';
+    const safe = htmlEscape(u);
+    if (/^https?:\/\//i.test(u)) {
+      return `<a href="${safe}" target="_blank" rel="noopener">${safe}</a>`;
+    }
+    return `<span class="bad">${safe}</span>`;
+  };
+  const kv = (k, v) =>
+      `<div class="ex-row"><div class="ex-k">${k}</div><div class="ex-v">${v}</div></div>`;
+  const section = (title, rows) =>
+      `<div class="ex-section"><div class="ex-title">${title}</div>${rows.join('')}</div>`;
+
+  const enUS = ex.en_us || {};
+  const urls = ex.urls || {};
+
+  const appInfo = section('App info', [
+    kv('Name', htmlEscape(ex.name || '—')),
+    kv('Bundle / App ID', `${htmlEscape(ex.package_id || '')} <span class="dim">/ ${htmlEscape(ex.app_id || '')}</span>`),
+    kv('Category', htmlEscape(ex.primary_category || '—')),
+    kv('Copyright', htmlEscape(ex.copyright || '—')),
+    kv('Update version', ex.update_version ? htmlEscape(ex.update_version) : '<span class="dim">(editable)</span>'),
+    kv('Contact', htmlEscape(ex.email || '—')),
+  ]);
+
+  const urlBlock = section('URLs', [
+    kv('Marketing', urlOrDash(urls.marketing)),
+    kv('Support', urlOrDash(urls.support)),
+    kv('Privacy', urlOrDash(urls.privacy)),
+  ]);
+
+  const contentBlock = section('en-US content preview', [
+    kv('Subtitle', htmlEscape(enUS.subtitle || '—')),
+    kv('Keywords', `<code>${htmlEscape(enUS.keywords || '—')}</code>`),
+    kv('Description', `<div class="ex-multiline">${htmlEscape(clip(enUS.description, 400))}</div>`),
+    kv('Release notes', `<div class="ex-multiline">${htmlEscape(clip(enUS.release_notes, 400))}</div>`),
+  ]);
+
+  const iapRows = (ex.iaps || []).map((iap) => {
+    const localesText = (iap.localizations || [])
+        .map((l) => `${l.locale}: ${l.name}`)
+        .join(' · ');
+    return `<li>
+      <b>${htmlEscape(iap.product_id || '')}</b>
+      <span class="dim">${htmlEscape(iap.reference_name || '')}</span>
+      <span class="ex-pill">${htmlEscape(iap.purchase_type || '')}</span>
+      ${iap.family_sharable ? '<span class="ex-pill">family</span>' : ''}
+      <span class="ex-pill">$${htmlEscape(iap.price_point || '?')} ${htmlEscape(iap.territory || '')}</span>
+      ${localesText ? `<div class="dim">${htmlEscape(localesText)}</div>` : ''}
+    </li>`;
+  }).join('');
+  const iapBlock = section(
+      `In-app purchases (${ex.iap_count || 0})`,
+      [
+        (ex.iap_count ?? 0) === 0
+            ? '<div class="ex-row"><div class="ex-v dim">none declared</div></div>'
+            : `<ul class="ex-iap-list">${iapRows}</ul>`,
+        ex.review_image_path
+            ? kv('Review image', `<code>${htmlEscape(ex.review_image_path)}</code>`)
+            : '',
+      ]);
+
+  body.innerHTML = appInfo + urlBlock + contentBlock + iapBlock;
+  const subtitle = document.getElementById('extracted-subtitle');
+  if (subtitle) {
+    subtitle.textContent =
+        `— ${ex.update_version ? 'v' + ex.update_version : 'editable version'}`;
+  }
+}
+
+/// Non-blocking info card listing locales that lack own translations for
+/// each text field. They will upload using the default-language fallback.
+function renderFallbackUsage() {
+  const card = $('#fallback-card');
+  const host = $('#fallback-list');
+  if (!card || !host) return;
+  host.innerHTML = '';
+  const fu = state.fallbackUsage || {};
+  const active = new Set(
+      (state.activeLocaleSet || []).filter((l) => state.selectedLocales.has(l)));
+  const sections = [
+    ['description', 'description.json'],
+    ['keywords', 'keywords.json'],
+    ['subtitle', 'subtitle.json'],
+    ['releasenotes', 'releasenotes.json'],
+  ];
+  let shown = 0;
+  for (const [key, label] of sections) {
+    const list = (fu[key] || []).filter((l) => active.has(l));
+    if (list.length === 0) continue;
+    const li = el('li', {}, el('b', {}, label + ': '),
+        list.join(', ') + ' — fallback to ' + state.defaultLanguage);
+    host.appendChild(li);
+    shown++;
+  }
+  card.classList.toggle('hidden', shown === 0);
+}
+
 function renderWarnings(list) {
   const card = $('#warnings-card');
   const host = $('#warnings-list');
@@ -404,11 +683,19 @@ function renderLocales() {
   host.innerHTML = '';
   const ws = state.workspace;
   if (!ws) return;
-  for (const loc of ws.localizations) {
+  const all = state.activeLocaleSet || [];
+  const cfgSet = new Set(ws.localizations || []);
+  for (const loc of all) {
+    const selected = state.selectedLocales.has(loc);
+    const inConfig = cfgSet.has(loc);
     const chip = el(
       'span',
       {
-        class: 'chip' + (state.selectedLocales.has(loc) ? ' selected' : ''),
+        class:
+            'chip' + (selected ? ' selected' : '') + (inConfig ? '' : ' extra'),
+        title: inConfig
+            ? loc
+            : loc + ' — not in config.json; will use en-US fallback',
       },
       loc
     );
@@ -416,12 +703,51 @@ function renderLocales() {
       if (state.selectedLocales.has(loc)) state.selectedLocales.delete(loc);
       else state.selectedLocales.add(loc);
       renderLocales();
+      renderKeywordBlock();
+      updateActionGate();
       postLocales();
     });
     host.appendChild(chip);
   }
-  $('#locale-count').textContent = `(${state.selectedLocales.size}/${ws.localizations.length})`;
+  $('#locale-count').textContent = `(${state.selectedLocales.size}/${all.length})`;
   $('#locale-empty-hint').classList.toggle('hidden', state.selectedLocales.size > 0);
+
+  // Regional-toggle button below the chips — shows current inclusion state
+  // for ar-SA, hi, zh-Hans, zh-Hant. Button itself hides when none of
+  // those locales exist in the active preset.
+  const REGIONAL = ['ar-SA', 'hi', 'zh-Hans', 'zh-Hant'];
+  const relevant = REGIONAL.filter((l) => all.includes(l));
+  const btn = $('#btn-toggle-regional');
+  const icon = $('#regional-icon');
+  const title = $('#regional-title');
+  const codes = $('#regional-codes');
+  if (btn && icon && title && codes) {
+    if (relevant.length === 0) {
+      btn.classList.add('hidden');
+    } else {
+      btn.classList.remove('hidden');
+      const selectedCount =
+          relevant.filter((l) => state.selectedLocales.has(l)).length;
+      const allIn = selectedCount === relevant.length;
+      const noneIn = selectedCount === 0;
+      codes.textContent = relevant.join(', ');
+      btn.classList.remove('state-all', 'state-none', 'state-partial');
+      if (allIn) {
+        btn.classList.add('state-all');
+        icon.textContent = '✓';
+        title.textContent = 'Included — click to exclude';
+      } else if (noneIn) {
+        btn.classList.add('state-none');
+        icon.textContent = '✕';
+        title.textContent = 'Excluded — click to include';
+      } else {
+        btn.classList.add('state-partial');
+        icon.textContent = '◐';
+        title.textContent =
+            `Partial (${selectedCount}/${relevant.length}) — click to include all`;
+      }
+    }
+  }
 }
 
 function renderRunBar() {

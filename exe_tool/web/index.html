@@ -9,6 +9,7 @@
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
+  <meta name="color-scheme" content="light dark" />
   <!-- Inline guard: if ANY previous page on localhost:3000 registered a
        Service Worker, it will intercept every subsequent fetch and serve
        its own cached copies ignoring our headers. Unregister them all on
@@ -41,12 +42,28 @@
       } catch (e) {}
     })();
   </script>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('metadata-uploader-theme');
+        document.documentElement.dataset.theme = saved === 'dark' ? 'dark' : 'light';
+      } catch (e) {
+        document.documentElement.dataset.theme = 'light';
+      }
+    })();
+  </script>
   <title>Metadata Uploader</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <header>
-    <h1>Metadata Uploader</h1>
+    <div class="header-top">
+      <h1>Metadata Uploader</h1>
+      <div class="theme-switch" role="group" aria-label="Theme">
+        <button class="theme-option active" type="button" data-theme-choice="light" aria-pressed="true">Light</button>
+        <button class="theme-option" type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+      </div>
+    </div>
     <div class="tabs">
       <button class="tab active" data-tab="new-push">New Push</button>
       <button class="tab" data-tab="live-update">Live Update</button>
@@ -99,6 +116,36 @@
         <div id="mismatch-detail" class="mismatch-detail"></div>
       </section>
 
+      <section id="keyword-block" class="card keyword-block hidden">
+        <div id="keyword-block-title">⛔ KEYWORDS OVER 100 CHARACTERS</div>
+        <div id="keyword-block-detail" class="keyword-block-detail"></div>
+      </section>
+
+      <section id="locale-set-card" class="card hidden">
+        <div class="section-head">
+          <strong>Locale set</strong>
+          <span class="dim">— applies to uploads regardless of config.json</span>
+        </div>
+        <label class="radio">
+          <input type="radio" name="locale-set" value="15" id="locale-set-15" checked />
+          <span><b>15 locales</b> — en-US, ja, en-GB, de-DE, fr-FR, en-AU, en-CA, nl-NL, hi, no, da, fi, it, es-ES, ko</span>
+        </label>
+        <label class="radio">
+          <input type="radio" name="locale-set" value="39" id="locale-set-39" />
+          <span><b>39 locales</b> — full ASC supported set (adds ar-SA, ca, cs, el, es-MX, fr-CA, he, hr, hu, id, ms, pl, pt-BR, pt-PT, ro, ru, sk, sv, th, tr, uk, vi, zh-Hans, zh-Hant)</span>
+        </label>
+        <div id="locale-set-conflict" class="conflict-hint hidden"></div>
+      </section>
+
+      <section id="fallback-card" class="card fallback-card hidden">
+        <div class="fallback-head">
+          <span class="info-icon">ℹ</span>
+          <strong>Locales using fallback translations</strong>
+          <span class="dim">— non-blocking</span>
+        </div>
+        <ul id="fallback-list"></ul>
+      </section>
+
       <section id="warnings-card" class="card warnings-card hidden">
         <div class="warnings-head">
           <span class="warn-icon">⚠</span>
@@ -118,6 +165,15 @@
           <button class="link" data-locale-op="invert">Invert</button>
         </div>
         <div id="locale-chips" class="chips"></div>
+        <button id="btn-toggle-regional" class="regional-btn hidden"
+                data-locale-op="toggle-regional"
+                title="Include or exclude ar-SA, hi, zh-Hans, zh-Hant as a group">
+          <span id="regional-icon" class="regional-icon">✓</span>
+          <span class="regional-body">
+            <span id="regional-title" class="regional-title">Included</span>
+            <span id="regional-codes" class="regional-codes">ar-SA, hi, zh-Hans, zh-Hant</span>
+          </span>
+        </button>
         <div id="locale-empty-hint" class="hint hidden">
           No locales selected — uploads will be skipped.
         </div>
@@ -161,9 +217,38 @@
         <button data-action="/action/check-screenshots" class="btn">📷 Check SS</button>
         <button data-action="/action/check-status" class="btn">👁 Check Status</button>
       </section>
+
+      <section class="card actions per-field">
+        <div class="section-head">
+          <strong>Update individual fields</strong>
+          <span class="dim">— push one attribute at a time (respects selected locales)</span>
+        </div>
+        <label class="checkbox field-force">
+          <input type="checkbox" id="field-forceful-update" />
+          <span>Forcefull Update</span>
+        </label>
+        <button data-action="/action/update-name" class="btn">🏷 Name</button>
+        <button data-action="/action/update-description" class="btn">📝 Description</button>
+        <button data-action="/action/update-keywords" class="btn">🔖 Keywords</button>
+        <button data-action="/action/update-subtitle" class="btn">📋 Subtitle</button>
+        <button data-action="/action/update-release-notes" class="btn">📢 Release Notes</button>
+        <button data-action="/action/update-marketing-url" class="btn">🔗 Marketing URL</button>
+        <button data-action="/action/update-support-url" class="btn">🛠 Support URL</button>
+        <button data-action="/action/update-privacy-url" class="btn">🔒 Privacy URL</button>
+        <button data-action="/action/update-copyright" class="btn">© Copyright</button>
+        <button data-action="/action/update-category" class="btn">📂 Category</button>
+      </section>
     </aside>
 
     <section id="logs">
+      <details id="extracted-card" class="extracted-card hidden" open>
+        <summary>
+          <span class="ex-icon">📋</span>
+          <strong>Extracted details</strong>
+          <span class="dim" id="extracted-subtitle">— config.json preview</span>
+        </summary>
+        <div id="extracted-body" class="extracted-body"></div>
+      </details>
       <div class="logs-toolbar">
         <strong>Logs</strong>
         <span id="log-count" class="dim">(0/0)</span>

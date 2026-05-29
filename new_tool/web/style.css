@@ -396,6 +396,10 @@ button.link {
   width: 100%;
   margin-bottom: 2px;
 }
+.actions.per-field .field-force {
+  width: 100%;
+  margin: 0 0 2px;
+}
 .actions.per-field .btn {
   font-size: 11.5px;
   padding: 5px 9px;

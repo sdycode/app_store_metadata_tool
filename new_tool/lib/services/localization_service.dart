@@ -17,25 +17,40 @@ class LocalizationService {
     return items.map(AscResource.fromJson).toList();
   }
 
-  Map<String, dynamic> _attrsFor(Workspace ws, String locale, String fallback) {
+  Map<String, dynamic> _attrsFor(
+    Workspace ws,
+    String locale,
+    String fallback, {
+    Set<String> includeEmptyFields = const <String>{},
+  }) {
     final attrs = <String, dynamic>{};
     final description = ws.textFor(ws.descriptions, locale, fallback);
     final keywords = ws.textFor(ws.keywords, locale, fallback);
     final subtitle = ws.textFor(ws.subtitles, locale, fallback);
     final whatsNew = ws.textFor(ws.releaseNotes, locale, fallback);
-    if (description.isNotEmpty) attrs['description'] = description;
-    if (keywords.isNotEmpty) attrs['keywords'] = keywords;
-    if (subtitle.isNotEmpty) attrs['subtitle'] = subtitle;
+    if (description.isNotEmpty || includeEmptyFields.contains('description')) {
+      attrs['description'] = description;
+    }
+    if (keywords.isNotEmpty || includeEmptyFields.contains('keywords')) {
+      attrs['keywords'] = keywords;
+    }
+    if (subtitle.isNotEmpty || includeEmptyFields.contains('subtitle')) {
+      attrs['subtitle'] = subtitle;
+    }
     final isInitialVersion = ws.config.metadata.updateVersion.isEmpty;
-    if (whatsNew.isNotEmpty && !isInitialVersion) {
+    if (!isInitialVersion &&
+        (whatsNew.isNotEmpty || includeEmptyFields.contains('whatsNew'))) {
       attrs['whatsNew'] = whatsNew;
     }
     final meta = ws.config.metadata;
-    if ((meta.marketingUrl ?? '').isNotEmpty) {
-      attrs['marketingUrl'] = meta.marketingUrl;
+    final marketingUrl = meta.marketingUrl ?? '';
+    if (marketingUrl.isNotEmpty ||
+        includeEmptyFields.contains('marketingUrl')) {
+      attrs['marketingUrl'] = marketingUrl;
     }
-    if ((meta.supportUrl ?? '').isNotEmpty) {
-      attrs['supportUrl'] = meta.supportUrl;
+    final supportUrl = meta.supportUrl ?? '';
+    if (supportUrl.isNotEmpty || includeEmptyFields.contains('supportUrl')) {
+      attrs['supportUrl'] = supportUrl;
     }
     return attrs;
   }
@@ -116,6 +131,9 @@ class LocalizationService {
     // When non-null, PATCH only these attribute keys — used by per-field
     // update buttons. Supersedes [onlyWhatsNew] when both are provided.
     Set<String>? onlyFields,
+    // Used only by per-field update buttons. When true, include the requested
+    // field even if its local value is empty so the PATCH is still attempted.
+    bool forcefulUpdate = false,
   }) async {
     await control?.checkpoint();
     final fallback = workspace.config.defaultLanguage;
@@ -125,7 +143,13 @@ class LocalizationService {
       orElse: () => AscResource(
           id: '', type: '', attributes: const {}, relationships: const {}),
     );
-    final full = _attrsFor(workspace, locale, fallback);
+    final full = _attrsFor(
+      workspace,
+      locale,
+      fallback,
+      includeEmptyFields:
+          forcefulUpdate && onlyFields != null ? onlyFields : const <String>{},
+    );
     Map<String, dynamic> attrs;
     if (onlyFields != null) {
       attrs = Map.fromEntries(

@@ -34,6 +34,8 @@ const state = {
   // app's "belt + braces" upload). Both apply in both tabs.
   forcefulReplace: true,
   replaceOnMismatch: true,
+  // Default-off knob for the individual field buttons only.
+  forcefulIndividualUpdate: false,
   nextLogIndex: 0,
   logs: [],
   enabledLevels: new Set(LEVELS),
@@ -114,6 +116,10 @@ $('#ss-force-replace').addEventListener('change', (e) => {
 });
 $('#ss-replace-mismatch').addEventListener('change', (e) => {
   state.replaceOnMismatch = e.target.checked;
+  postOptions();
+});
+$('#field-forceful-update').addEventListener('change', (e) => {
+  state.forcefulIndividualUpdate = e.target.checked;
   postOptions();
 });
 
@@ -297,6 +303,7 @@ async function uploadWorkspace() {
 // ---- Actions --------------------------------------------------------------
 async function runAction(path) {
   try {
+    await postOptions();
     const resp = await fetch(path, { method: 'POST' });
     if (resp.status === 400) alert('Pick a folder first.');
     if (resp.status === 409) alert('Another action is already running.');
@@ -322,6 +329,7 @@ async function postOptions() {
     body: JSON.stringify({
       forcefulReplace: state.forcefulReplace,
       replaceOnMismatch: state.replaceOnMismatch,
+      forcefulIndividualUpdate: state.forcefulIndividualUpdate,
       liveUpdateMode: state.tab === 'live-update',
     }),
   });
@@ -383,8 +391,12 @@ function applyStatus(s) {
     if (typeof s.replaceOnMismatch === 'boolean') {
       state.replaceOnMismatch = s.replaceOnMismatch;
     }
+    if (typeof s.forcefulIndividualUpdate === 'boolean') {
+      state.forcefulIndividualUpdate = s.forcefulIndividualUpdate;
+    }
     $('#ss-force-replace').checked = state.forcefulReplace;
     $('#ss-replace-mismatch').checked = state.replaceOnMismatch;
+    $('#field-forceful-update').checked = state.forcefulIndividualUpdate;
     // Locale set + keyword data live on the top-level status payload.
     state.activeLocaleSet = s.activeLocaleSet || [];
     state.activeLocaleSetName = s.activeLocaleSetName || '15';

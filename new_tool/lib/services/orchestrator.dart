@@ -109,6 +109,10 @@ class Orchestrator {
   /// because those are carried over from the previously shipped version.
   bool liveUpdateMode = false;
 
+  /// Default-off override for the individual per-locale field buttons.
+  /// Full metadata uploads keep the normal empty-field skip behavior.
+  bool forcefulIndividualUpdate = false;
+
   Orchestrator(this.r)
       : activeLocaleSet = _autoPreset(r.workspace.config.localizations),
         selectedLocales = Set<String>.from(
@@ -315,6 +319,7 @@ class Orchestrator {
           workspace: ws,
           control: control,
           onlyFields: {attrKey},
+          forcefulUpdate: forcefulIndividualUpdate,
         );
       } on CancelledException {
         rethrow;

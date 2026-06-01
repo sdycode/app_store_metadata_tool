@@ -40,8 +40,7 @@ class AppInfoService {
       final state = (i.attributes['appStoreState'] ?? '').toString();
       if (editableStates.contains(state)) return i;
     }
-    _log.warn(
-        'No editable appInfo; falling back to ${infos.first.id}',
+    _log.warn('No editable appInfo; falling back to ${infos.first.id}',
         scope: 'appinfo');
     return infos.first;
   }
@@ -92,8 +91,8 @@ class AppInfoService {
   }
 
   Future<List<AscResource>> listLocalizations(String appInfoId) async {
-    final list = await client
-        .getAllData('/v1/appInfos/$appInfoId/appInfoLocalizations');
+    final list =
+        await client.getAllData('/v1/appInfos/$appInfoId/appInfoLocalizations');
     return list.map(AscResource.fromJson).toList();
   }
 
@@ -113,20 +112,29 @@ class AppInfoService {
     String? name,
     String? privacyPolicyUrl,
     RunState? control,
+    bool throwOnError = false,
   }) async {
     await control?.checkpoint();
     final attrs = <String, dynamic>{};
     if (name != null && name.trim().isNotEmpty) attrs['name'] = name.trim();
+    String? invalidPrivacyReason;
     if (privacyPolicyUrl != null) {
       if (_isValidHttpUrl(privacyPolicyUrl)) {
         attrs['privacyPolicyUrl'] = privacyPolicyUrl;
       } else if (privacyPolicyUrl.isNotEmpty) {
+        invalidPrivacyReason =
+            'privacyPolicyUrl is not a valid http/https URL: "$privacyPolicyUrl"';
         _log.warn(
             '$locale: Skipping privacyPolicyUrl — not a valid http/https URL: "$privacyPolicyUrl"',
             scope: 'appinfo');
       }
     }
-    if (attrs.isEmpty) return null;
+    if (attrs.isEmpty) {
+      if (throwOnError && invalidPrivacyReason != null) {
+        throw StateError('$locale: $invalidPrivacyReason');
+      }
+      return null;
+    }
 
     final existing = await listLocalizations(appInfoId);
     final found = existing.firstWhere(
@@ -170,6 +178,7 @@ class AppInfoService {
       return AscResource.fromJson(json['data'] as Map<String, dynamic>);
     } on AscApiException catch (e) {
       _log.error('$locale: appInfo localization failed: $e', scope: 'appinfo');
+      if (throwOnError) rethrow;
       return null;
     }
   }

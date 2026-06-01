@@ -21,9 +21,8 @@ Future<void> main(List<String> args) async {
   // (::1) and IPv4 (127.0.0.1) loopback. Firefox resolves `localhost` to
   // ::1 first, and a server bound only to 127.0.0.1 will intermittently
   // appear unreachable ("Failed to fetch"). Binding dual-stack fixes it.
-  final server = await HttpServer.bind(
-      InternetAddress.anyIPv6, kPort,
-      v6Only: false);
+  final server =
+      await HttpServer.bind(InternetAddress.anyIPv6, kPort, v6Only: false);
   server.autoCompress = true;
   print('ASC upload tool listening on http://localhost:$kPort');
 
@@ -74,8 +73,8 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
         // A fresh token per request guarantees the browser fetches new JS/CSS
         // even if it ignored Cache-Control, has a stale ServiceWorker, or
         // was opened in a tab that cached the previous server's response.
-        final html = await File(p.join(webDir.path, 'index.html'))
-            .readAsString();
+        final html =
+            await File(p.join(webDir.path, 'index.html')).readAsString();
         final v = DateTime.now().microsecondsSinceEpoch.toString();
         final patched = html
             .replaceAll('href="/style.css"', 'href="/style.css?v=$v"')
@@ -83,7 +82,8 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
             // Inject a visible build badge so you can verify which response
             // the browser rendered. If the on-screen token matches what the
             // terminal logs below, you're on fresh code. If not → cache.
-            .replaceAll('<body>', '<body>\n<div id="build-badge">build $v</div>');
+            .replaceAll(
+                '<body>', '<body>\n<div id="build-badge">build $v</div>');
         LoggingService.instance
             .info('Served / with build token $v', scope: 'server');
         _writeStatic(req, 'text/html', patched);
@@ -100,13 +100,20 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
         return;
       }
       if (path == '/health') {
-        await _json(req, {'ok': true, 'port': kPort, 'ts': DateTime.now().toIso8601String()});
+        await _json(req, {
+          'ok': true,
+          'port': kPort,
+          'ts': DateTime.now().toIso8601String()
+        });
         return;
       }
       if (path == '/logs') {
-        final since = int.tryParse(req.uri.queryParameters['since'] ?? '0') ?? 0;
-        final entries =
-            LoggingService.instance.since(since).map((e) => e.toJson()).toList();
+        final since =
+            int.tryParse(req.uri.queryParameters['since'] ?? '0') ?? 0;
+        final entries = LoggingService.instance
+            .since(since)
+            .map((e) => e.toJson())
+            .toList();
         await _json(req, {
           'entries': entries,
           'total': LoggingService.instance.entries.length,
@@ -138,7 +145,8 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
         case '/action/validate':
           await _runSyncAction(req, 'Validate', () {
             final r = _orch!.r.validator.run(_orch!.r.workspace);
-            LoggingService.instance.info('Validation: ${jsonEncode(r.toJson())}',
+            LoggingService.instance.info(
+                'Validation: ${jsonEncode(r.toJson())}',
                 scope: 'validate');
           });
           return;
@@ -158,8 +166,7 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
           await _runAction(req, 'Update Name', _orch!.updateAppName);
           return;
         case '/action/update-description':
-          await _runAction(
-              req, 'Update Description', _orch!.updateDescription);
+          await _runAction(req, 'Update Description', _orch!.updateDescription);
           return;
         case '/action/update-keywords':
           await _runAction(req, 'Update Keywords', _orch!.updateKeywords);
@@ -185,7 +192,8 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
           await _runAction(req, 'Update Copyright', _orch!.updateCopyright);
           return;
         case '/action/update-category':
-          await _runAction(req, 'Update Category', _orch!.updatePrimaryCategory);
+          await _runAction(
+              req, 'Update Category', _orch!.updatePrimaryCategory);
           return;
         case '/action/check-status':
           await _runAction(req, 'Check Status', () async {
@@ -198,6 +206,11 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
         case '/action/check-screenshots':
           await _runAction(req, 'Check Screenshots', () async {
             await _orch!.checkScreenshots();
+          });
+          return;
+        case '/action/check-app-names':
+          await _runAction(req, 'Check App Name Availability', () async {
+            await _orch!.checkAppNames();
           });
           return;
         case '/action/pause':
@@ -264,10 +277,14 @@ Map<String, List<String>> _fallbackUsage() {
     'releasenotes': [],
   };
   for (final locale in orch.activeLocaleSet) {
-    if (!ws.descriptions.containsKey(locale)) missing['description']!.add(locale);
+    if (!ws.descriptions.containsKey(locale)) {
+      missing['description']!.add(locale);
+    }
     if (!ws.keywords.containsKey(locale)) missing['keywords']!.add(locale);
     if (!ws.subtitles.containsKey(locale)) missing['subtitle']!.add(locale);
-    if (!ws.releaseNotes.containsKey(locale)) missing['releasenotes']!.add(locale);
+    if (!ws.releaseNotes.containsKey(locale)) {
+      missing['releasenotes']!.add(locale);
+    }
   }
   return missing;
 }
@@ -603,8 +620,8 @@ Future<void> _writeStatic(
 }
 
 void _applyNoCache(HttpResponse res) {
-  res.headers.set(
-      'Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.headers
+      .set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   res.headers.set('Pragma', 'no-cache');
   res.headers.set('Expires', '0');
 }
@@ -634,4 +651,3 @@ Future<void> _openBrowser(String url) async {
     // best-effort only
   }
 }
-

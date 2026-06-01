@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
 import '../models/asc_resource.dart';
@@ -22,16 +24,78 @@ import 'workspace.dart';
 /// sync run against the selected set; missing locale data falls back to
 /// default_language (typically en-US) as the rest of the pipeline already does.
 const List<String> kLocaleSet15 = [
-  'en-US', 'ja', 'en-GB', 'de-DE', 'fr-FR', 'en-AU', 'en-CA', 'nl-NL',
-  'hi', 'no', 'da', 'fi', 'it', 'es-ES', 'ko',
+  'en-US',
+  'ja',
+  'en-GB',
+  'de-DE',
+  'fr-FR',
+  'en-AU',
+  'en-CA',
+  'nl-NL',
+  'hi',
+  'no',
+  'da',
+  'fi',
+  'it',
+  'es-ES',
+  'ko',
 ];
 
 const List<String> kLocaleSet39 = [
-  'ar-SA', 'ca', 'cs', 'da', 'de-DE', 'el', 'en-AU', 'en-CA', 'en-GB', 'en-US',
-  'es-ES', 'es-MX', 'fi', 'fr-CA', 'fr-FR', 'he', 'hi', 'hr', 'hu', 'id', 'it',
-  'ja', 'ko', 'ms', 'nl-NL', 'no', 'pl', 'pt-BR', 'pt-PT', 'ro', 'ru', 'sk',
-  'sv', 'th', 'tr', 'uk', 'vi', 'zh-Hans', 'zh-Hant',
+  'ar-SA',
+  'ca',
+  'cs',
+  'da',
+  'de-DE',
+  'el',
+  'en-AU',
+  'en-CA',
+  'en-GB',
+  'en-US',
+  'es-ES',
+  'es-MX',
+  'fi',
+  'fr-CA',
+  'fr-FR',
+  'he',
+  'hi',
+  'hr',
+  'hu',
+  'id',
+  'it',
+  'ja',
+  'ko',
+  'ms',
+  'nl-NL',
+  'no',
+  'pl',
+  'pt-BR',
+  'pt-PT',
+  'ro',
+  'ru',
+  'sk',
+  'sv',
+  'th',
+  'tr',
+  'uk',
+  'vi',
+  'zh-Hans',
+  'zh-Hant',
 ];
+
+class _LocaleUploadFailure {
+  final String step;
+  final String locale;
+  final String reason;
+
+  const _LocaleUploadFailure({
+    required this.step,
+    required this.locale,
+    required this.reason,
+  });
+
+  String get copyLine => '$step | $locale | $reason';
+}
 
 class OrchestratorRuntime {
   final Workspace workspace;
@@ -115,8 +179,8 @@ class Orchestrator {
 
   Orchestrator(this.r)
       : activeLocaleSet = _autoPreset(r.workspace.config.localizations),
-        selectedLocales = Set<String>.from(
-            _autoPreset(r.workspace.config.localizations));
+        selectedLocales =
+            Set<String>.from(_autoPreset(r.workspace.config.localizations));
 
   /// Pick the closer built-in preset based on how many locales the config
   /// declares. Config with ~39 locales → 39-set; anything smaller → 15-set.
@@ -141,6 +205,51 @@ class Orchestrator {
     return activeLocaleSet.where(selectedLocales.contains).toList();
   }
 
+  String _failureReason(Object error) {
+    final text = error.toString().trim();
+    if (text.isEmpty) return error.runtimeType.toString();
+    return text.replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  void _recordLocaleFailure(
+    List<_LocaleUploadFailure> failures, {
+    required String step,
+    required String locale,
+    Object? error,
+    String? reason,
+  }) {
+    final failure = _LocaleUploadFailure(
+      step: step,
+      locale: locale,
+      reason:
+          reason ?? (error == null ? 'unknown error' : _failureReason(error)),
+    );
+    failures.add(failure);
+    _log.error('$locale $step failed: ${failure.reason}',
+        scope: 'orchestrator');
+  }
+
+  void _logLocaleFailureSummary(
+    String title,
+    List<_LocaleUploadFailure> failures, {
+    int startIndex = 0,
+  }) {
+    final relevant = failures.skip(startIndex).toList(growable: false);
+    if (relevant.isEmpty) {
+      _log.success('$title: no per-locale failures', scope: 'upload-summary');
+      return;
+    }
+
+    final out = StringBuffer()
+      ..writeln('$title: ${relevant.length} per-locale failure(s)')
+      ..writeln('Copyable summary:')
+      ..writeln('step | locale | reason');
+    for (final failure in relevant) {
+      out.writeln(failure.copyLine);
+    }
+    _log.error(out.toString().trimRight(), scope: 'upload-summary');
+  }
+
   Future<T?> runGuarded<T>(String label, Future<T> Function() body) async {
     control.startRun(label);
     try {
@@ -162,8 +271,7 @@ class Orchestrator {
       return true;
     } on AscApiException catch (e) {
       if (e.statusCode == 401) {
-        _log.error(
-            'Auth FAILED — 401: check key_id / issuer_id / .p8 match',
+        _log.error('Auth FAILED — 401: check key_id / issuer_id / .p8 match',
             scope: 'auth');
       } else {
         _log.error('Auth check failed: $e', scope: 'auth');
@@ -175,13 +283,21 @@ class Orchestrator {
     }
   }
 
-  Future<void> uploadMetadata() async {
+  Future<void> uploadMetadata() => _uploadMetadata();
+
+  Future<void> _uploadMetadata({
+    List<_LocaleUploadFailure>? failureSink,
+    bool logSummary = true,
+  }) async {
     final ws = r.workspace;
     final locales = _effectiveLocales();
     if (locales.isEmpty) {
-      _log.warn('No locales selected; nothing to upload', scope: 'orchestrator');
+      _log.warn('No locales selected; nothing to upload',
+          scope: 'orchestrator');
       return;
     }
+    final failures = failureSink ?? <_LocaleUploadFailure>[];
+    final summaryStart = failures.length;
     final state = await r.resume
         .load(ws.config.metadata.packageId, ws.config.metadata.updateVersion);
 
@@ -191,8 +307,8 @@ class Orchestrator {
       updateVersion: ws.config.metadata.updateVersion,
     );
     state.versionDone = true;
-    await r.resume.save(ws.config.metadata.packageId,
-        ws.config.metadata.updateVersion, state);
+    await r.resume.save(
+        ws.config.metadata.packageId, ws.config.metadata.updateVersion, state);
 
     for (final locale in locales) {
       try {
@@ -210,13 +326,17 @@ class Orchestrator {
       } on CancelledException {
         rethrow;
       } catch (e) {
-        _log.error('$locale metadata failed: $e', scope: 'orchestrator');
+        _recordLocaleFailure(
+          failures,
+          step: 'version metadata',
+          locale: locale,
+          error: e,
+        );
       }
     }
 
     if (liveUpdateMode) {
-      _log.info(
-          'Live Update mode: only whatsNew per locale was pushed',
+      _log.info('Live Update mode: only whatsNew per locale was pushed',
           scope: 'orchestrator');
       if (forcefulIndividualUpdate) {
         _log.warn(
@@ -229,12 +349,23 @@ class Orchestrator {
     // Runs in BOTH New Push and Live Update — the app name is App-level,
     // not Version-level, so Apple won't auto-inherit it between versions.
     // User explicitly asked to forcefully push it on every upload.
-    await _applyAppInfo(app.id, locales);
+    await _applyAppInfo(app.id, locales, failures);
+    if (logSummary) {
+      _logLocaleFailureSummary(
+        'Upload Metadata',
+        failures,
+        startIndex: summaryStart,
+      );
+    }
   }
 
   /// PATCHes the editable appInfo with primary category + per-locale name
   /// + privacyPolicyUrl. Non-fatal — if a locale fails, the rest proceed.
-  Future<void> _applyAppInfo(String appId, List<String> locales) async {
+  Future<void> _applyAppInfo(
+    String appId,
+    List<String> locales,
+    List<_LocaleUploadFailure> failures,
+  ) async {
     final ws = r.workspace;
     final meta = ws.config.metadata;
     final primaryCategory = (meta.primaryCategory ?? '').trim();
@@ -277,19 +408,26 @@ class Orchestrator {
       try {
         await control.checkpoint();
         final perLocale = specific[locale]?.trim();
-        final nameForLocale =
-            (perLocale != null && perLocale.isNotEmpty) ? perLocale : defaultName;
+        final nameForLocale = (perLocale != null && perLocale.isNotEmpty)
+            ? perLocale
+            : defaultName;
         await r.appInfo.upsertLocalization(
           appInfoId: appInfo.id,
           locale: locale,
           name: nameForLocale.isEmpty ? null : nameForLocale,
           privacyPolicyUrl: privacyUrl.isEmpty ? null : privacyUrl,
           control: control,
+          throwOnError: true,
         );
       } on CancelledException {
         rethrow;
       } catch (e) {
-        _log.error('$locale appInfo loc failed: $e', scope: 'orchestrator');
+        _recordLocaleFailure(
+          failures,
+          step: 'app info',
+          locale: locale,
+          error: e,
+        );
       }
     }
   }
@@ -300,12 +438,12 @@ class Orchestrator {
   // locales, without touching the rest.
   // =====================================================================
 
-  Future<void> _runPerLocaleVersionField(
-      String attrKey, String label) async {
+  Future<void> _runPerLocaleVersionField(String attrKey, String label) async {
     final ws = r.workspace;
     final locales = _effectiveLocales();
     if (locales.isEmpty) {
-      _log.warn('No locales selected; nothing to upload', scope: 'orchestrator');
+      _log.warn('No locales selected; nothing to upload',
+          scope: 'orchestrator');
       return;
     }
     final app = await r.apps.requireByBundleId(ws.config.metadata.packageId);
@@ -320,6 +458,7 @@ class Orchestrator {
         scope: 'orchestrator');
     _log.info('▶ update $label → ${locales.length} locale(s)',
         scope: 'orchestrator');
+    final failures = <_LocaleUploadFailure>[];
     for (final locale in locales) {
       try {
         await control.checkpoint();
@@ -334,9 +473,15 @@ class Orchestrator {
       } on CancelledException {
         rethrow;
       } catch (e) {
-        _log.error('$locale $label failed: $e', scope: 'orchestrator');
+        _recordLocaleFailure(
+          failures,
+          step: label,
+          locale: locale,
+          error: e,
+        );
       }
     }
+    _logLocaleFailureSummary('Update $label', failures);
   }
 
   Future<void> updateDescription() =>
@@ -367,8 +512,8 @@ class Orchestrator {
       updateVersion: ws.config.metadata.updateVersion,
     );
     try {
-      await r.versions.patchMetadata(
-          versionId: version.id, copyright: copyright);
+      await r.versions
+          .patchMetadata(versionId: version.id, copyright: copyright);
       _log.success('copyright set to "$copyright"', scope: 'orchestrator');
     } catch (e) {
       _log.error('copyright patch failed: $e', scope: 'orchestrator');
@@ -397,8 +542,7 @@ class Orchestrator {
     final app = await r.apps.requireByBundleId(ws.config.metadata.packageId);
     try {
       final appInfo = await r.appInfo.findEditable(app.id);
-      await r.appInfo
-          .patchCategories(appInfo.id, primaryCategory: cat);
+      await r.appInfo.patchCategories(appInfo.id, primaryCategory: cat);
     } catch (e) {
       _log.error('primary-category update failed: $e', scope: 'orchestrator');
     }
@@ -421,6 +565,11 @@ class Orchestrator {
     }
     final app = await r.apps.requireByBundleId(ws.config.metadata.packageId);
     final appInfo = await r.appInfo.findEditable(app.id);
+    final label = [
+      if (includeName) 'name',
+      if (includePrivacyUrl) 'privacy URL',
+    ].join(' + ');
+    final failures = <_LocaleUploadFailure>[];
     for (final locale in locales) {
       try {
         await control.checkpoint();
@@ -436,26 +585,40 @@ class Orchestrator {
           appInfoId: appInfo.id,
           locale: locale,
           name: nameForLocale,
-          privacyPolicyUrl: includePrivacyUrl && privacyUrl.isNotEmpty
-              ? privacyUrl
-              : null,
+          privacyPolicyUrl:
+              includePrivacyUrl && privacyUrl.isNotEmpty ? privacyUrl : null,
           control: control,
+          throwOnError: true,
         );
       } on CancelledException {
         rethrow;
       } catch (e) {
-        _log.error('$locale appInfo loc failed: $e', scope: 'orchestrator');
+        _recordLocaleFailure(
+          failures,
+          step: 'app info $label',
+          locale: locale,
+          error: e,
+        );
       }
     }
+    _logLocaleFailureSummary('Update $label', failures);
   }
 
-  Future<void> uploadScreenshots() async {
+  Future<void> uploadScreenshots() => _uploadScreenshots();
+
+  Future<void> _uploadScreenshots({
+    List<_LocaleUploadFailure>? failureSink,
+    bool logSummary = true,
+  }) async {
     final ws = r.workspace;
     final locales = _effectiveLocales();
     if (locales.isEmpty) {
-      _log.warn('No locales selected; nothing to upload', scope: 'orchestrator');
+      _log.warn('No locales selected; nothing to upload',
+          scope: 'orchestrator');
       return;
     }
+    final failures = failureSink ?? <_LocaleUploadFailure>[];
+    final summaryStart = failures.length;
     final state = await r.resume
         .load(ws.config.metadata.packageId, ws.config.metadata.updateVersion);
 
@@ -467,27 +630,31 @@ class Orchestrator {
     final existingLocalizations = await r.locs.list(version.id);
 
     for (final locale in locales) {
-      await control.checkpoint();
-      final loc = existingLocalizations.firstWhere(
-        (e) => (e.attributes['locale'] ?? '') == locale,
-        orElse: () => AscResource(
-            id: '', type: '', attributes: const {}, relationships: const {}),
-      );
-      String localizationId = loc.id;
-      if (localizationId.isEmpty) {
-        final created = await r.locs.upsert(
-            versionId: version.id,
-            locale: locale,
-            workspace: ws,
-            control: control);
-        localizationId = created.id;
-      }
-      if (localizationId.isEmpty) {
-        _log.warn('$locale: no localization id; skipping screenshots',
-            scope: 'orchestrator');
-        continue;
-      }
       try {
+        await control.checkpoint();
+        final loc = existingLocalizations.firstWhere(
+          (e) => (e.attributes['locale'] ?? '') == locale,
+          orElse: () => AscResource(
+              id: '', type: '', attributes: const {}, relationships: const {}),
+        );
+        String localizationId = loc.id;
+        if (localizationId.isEmpty) {
+          final created = await r.locs.upsert(
+              versionId: version.id,
+              locale: locale,
+              workspace: ws,
+              control: control);
+          localizationId = created.id;
+        }
+        if (localizationId.isEmpty) {
+          _recordLocaleFailure(
+            failures,
+            step: 'screenshots',
+            locale: locale,
+            reason: 'no localization id; skipped screenshots',
+          );
+          continue;
+        }
         final outcome = await r.screenshots.syncLocale(
           localizationId: localizationId,
           locale: locale,
@@ -505,8 +672,20 @@ class Orchestrator {
       } on CancelledException {
         rethrow;
       } catch (e) {
-        _log.error('$locale screenshots failed: $e', scope: 'orchestrator');
+        _recordLocaleFailure(
+          failures,
+          step: 'screenshots',
+          locale: locale,
+          error: e,
+        );
       }
+    }
+    if (logSummary) {
+      _logLocaleFailureSummary(
+        'Upload Screenshots',
+        failures,
+        startIndex: summaryStart,
+      );
     }
   }
 
@@ -524,10 +703,7 @@ class Orchestrator {
       try {
         await control.checkpoint();
         await r.iap.syncOne(
-            appId: app.id,
-            iap: iapMeta,
-            workspace: ws,
-            control: control);
+            appId: app.id, iap: iapMeta, workspace: ws, control: control);
         state.iapByProduct[iapMeta.productId] = true;
         await r.resume.save(ws.config.metadata.packageId,
             ws.config.metadata.updateVersion, state);
@@ -541,15 +717,18 @@ class Orchestrator {
   }
 
   Future<void> uploadAll() async {
-    await uploadMetadata();
-    await uploadScreenshots();
+    final failures = <_LocaleUploadFailure>[];
+    await _uploadMetadata(failureSink: failures, logSummary: false);
+    await _uploadScreenshots(failureSink: failures, logSummary: false);
     await uploadIap();
+    _logLocaleFailureSummary('Upload All', failures);
   }
 
   Future<Map<String, dynamic>> checkScreenshots() async {
     final ws = r.workspace;
-    final locales =
-        _effectiveLocales().isEmpty ? ws.config.localizations : _effectiveLocales();
+    final locales = _effectiveLocales().isEmpty
+        ? ws.config.localizations
+        : _effectiveLocales();
     final app = await r.apps.requireByBundleId(ws.config.metadata.packageId);
     final version = await r.versions.findEditable(app.id) ??
         await r.versions.getOrCreate(
@@ -563,72 +742,302 @@ class Orchestrator {
       'versionString': version.attributes['versionString'],
     };
     final rows = <String, dynamic>{};
+    final notUploaded = <String>[];
+    final countMismatch = <String>[];
+    final checkErrors = <String>[];
     for (final locale in locales) {
-      await control.checkpoint();
-      final loc = localizations.firstWhere(
-        (l) => (l.attributes['locale'] ?? '') == locale,
-        orElse: () => AscResource(
-            id: '', type: '', attributes: const {}, relationships: const {}),
-      );
-      final remote = <String, int>{};
-      int remoteTotal = 0;
-      final hasLoc = loc.id.isNotEmpty;
-      if (hasLoc) {
-        final sets = await r.screenshots.listSets(loc.id);
-        for (final s in sets) {
-          final display =
-              (s.attributes['screenshotDisplayType'] ?? '').toString();
-          final shots = await r.screenshots.listShots(s.id);
-          remote[display] = shots.length;
-          remoteTotal += shots.length;
+      try {
+        await control.checkpoint();
+        final loc = localizations.firstWhere(
+          (l) => (l.attributes['locale'] ?? '') == locale,
+          orElse: () => AscResource(
+              id: '', type: '', attributes: const {}, relationships: const {}),
+        );
+        final remote = <String, int>{};
+        int remoteTotal = 0;
+        final hasLoc = loc.id.isNotEmpty;
+        if (hasLoc) {
+          final sets = await r.screenshots.listSets(loc.id);
+          for (final s in sets) {
+            final display =
+                (s.attributes['screenshotDisplayType'] ?? '').toString();
+            final shots = await r.screenshots.listShots(s.id);
+            remote[display] = shots.length;
+            remoteTotal += shots.length;
+          }
         }
-      }
-      final primary = ws.screenshotDirFor(locale);
-      final fallback = ws.screenshotDirFor(ws.config.defaultLanguage);
-      final usedFallback = !(primary.existsSync() &&
-              _countLocal(primary) > 0) &&
-          locale != ws.config.defaultLanguage;
-      final localDir = (primary.existsSync() && _countLocal(primary) > 0)
-          ? primary
-          : fallback;
-      final localCount = _countLocal(localDir);
+        final primary = ws.screenshotDirFor(locale);
+        final fallback = ws.screenshotDirFor(ws.config.defaultLanguage);
+        final usedFallback =
+            !(primary.existsSync() && _countLocal(primary) > 0) &&
+                locale != ws.config.defaultLanguage;
+        final localDir = (primary.existsSync() && _countLocal(primary) > 0)
+            ? primary
+            : fallback;
+        final localCount = _countLocal(localDir);
+        final fallbackNote =
+            usedFallback ? ', fallback=${ws.config.defaultLanguage}' : '';
 
-      rows[locale] = {
-        'localization': hasLoc ? 'exists' : 'missing',
-        'remote': remote,
-        'remoteTotal': remoteTotal,
-        'local': localCount,
-        'localFolder':
-            usedFallback ? '${ws.config.defaultLanguage} (fallback)' : locale,
-      };
+        rows[locale] = {
+          'localization': hasLoc ? 'exists' : 'missing',
+          'remote': remote,
+          'remoteTotal': remoteTotal,
+          'local': localCount,
+          'localFolder':
+              usedFallback ? '${ws.config.defaultLanguage} (fallback)' : locale,
+        };
 
-      final summary = StringBuffer()
-        ..write('$locale → remote=$remoteTotal (')
-        ..write(remote.entries.map((e) => '${e.key}:${e.value}').join(', '))
-        ..write('), local=$localCount');
-      if (!hasLoc) summary.write('  [no remote localization yet]');
-      if (usedFallback) {
-        summary.write('  [local falls back to ${ws.config.defaultLanguage}]');
+        final summary = StringBuffer()
+          ..write('$locale → remote=$remoteTotal (')
+          ..write(remote.entries.map((e) => '${e.key}:${e.value}').join(', '))
+          ..write('), local=$localCount');
+        if (!hasLoc) summary.write('  [no remote localization yet]');
+        if (usedFallback) {
+          summary.write('  [local falls back to ${ws.config.defaultLanguage}]');
+        }
+        _log.info(summary.toString(), scope: 'check-ss');
+
+        if (localCount > 0 && remoteTotal == 0) {
+          final locNote = hasLoc ? '' : ', no remote localization';
+          notUploaded
+              .add('$locale: local=$localCount, remote=0$locNote$fallbackNote');
+        } else if (remoteTotal != localCount) {
+          countMismatch.add(
+              '$locale: local=$localCount, remote=$remoteTotal$fallbackNote');
+        }
+      } on CancelledException {
+        rethrow;
+      } catch (e) {
+        final reason = _failureReason(e);
+        checkErrors.add('$locale: $reason');
+        rows[locale] = {'error': reason};
+        _log.error('$locale check screenshots failed: $reason',
+            scope: 'check-ss');
       }
-      _log.info(summary.toString(), scope: 'check-ss');
     }
     report['locales'] = rows;
+    final hasIssues = notUploaded.isNotEmpty ||
+        countMismatch.isNotEmpty ||
+        checkErrors.isNotEmpty;
+    if (!hasIssues) {
+      _log.success('Check SS summary: all checked locale counts match',
+          scope: 'check-ss');
+    } else {
+      final summary = StringBuffer()..writeln('Check SS summary');
+      if (notUploaded.isNotEmpty) {
+        summary.writeln('Not uploaded (${notUploaded.length}):');
+        for (final line in notUploaded) {
+          summary.writeln('- $line');
+        }
+      }
+      if (countMismatch.isNotEmpty) {
+        summary.writeln('Count mismatch (${countMismatch.length}):');
+        for (final line in countMismatch) {
+          summary.writeln('- $line');
+        }
+      }
+      if (checkErrors.isNotEmpty) {
+        summary.writeln('Check errors (${checkErrors.length}):');
+        for (final line in checkErrors) {
+          summary.writeln('- $line');
+        }
+      }
+      _log.error(summary.toString().trimRight(), scope: 'check-ss');
+    }
+    return report;
+  }
+
+  String _storeCountryForLocale(String locale) {
+    const overrides = {
+      'ar-SA': 'SA',
+      'ca': 'ES',
+      'cs': 'CZ',
+      'da': 'DK',
+      'de-DE': 'DE',
+      'el': 'GR',
+      'en-AU': 'AU',
+      'en-CA': 'CA',
+      'en-GB': 'GB',
+      'en-US': 'US',
+      'es-ES': 'ES',
+      'es-MX': 'MX',
+      'fi': 'FI',
+      'fr-CA': 'CA',
+      'fr-FR': 'FR',
+      'he': 'IL',
+      'hi': 'IN',
+      'hr': 'HR',
+      'hu': 'HU',
+      'id': 'ID',
+      'it': 'IT',
+      'ja': 'JP',
+      'ko': 'KR',
+      'ms': 'MY',
+      'nl-NL': 'NL',
+      'no': 'NO',
+      'pl': 'PL',
+      'pt-BR': 'BR',
+      'pt-PT': 'PT',
+      'ro': 'RO',
+      'ru': 'RU',
+      'sk': 'SK',
+      'sv': 'SE',
+      'th': 'TH',
+      'tr': 'TR',
+      'uk': 'UA',
+      'vi': 'VN',
+      'zh-Hans': 'CN',
+      'zh-Hant': 'TW',
+    };
+    return overrides[locale] ?? 'US';
+  }
+
+  String _normalizedAppName(String value) =>
+      value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+
+  Future<Map<String, dynamic>> checkAppNames() async {
+    final ws = r.workspace;
+    final locales = _effectiveLocales();
+    if (locales.isEmpty) {
+      _log.warn('No locales selected; nothing to check', scope: 'app-name');
+      return const {'locales': <String, dynamic>{}};
+    }
+
+    final defaultName = (ws.config.metadata.name ?? '').trim();
+    final specific = ws.config.specificNameLocales;
+    if (defaultName.isEmpty && specific.isEmpty) {
+      _log.error('config.json metadata.name is empty; cannot check app names',
+          scope: 'app-name');
+      return const {'locales': <String, dynamic>{}};
+    }
+
+    final rows = <String, dynamic>{};
+    final available = <String>[];
+    final conflicts = <String>[];
+    final checkErrors = <String>[];
+    final ownAppId = ws.config.metadata.appId.trim();
+    final bundleId = ws.config.metadata.packageId.trim();
+
+    for (final locale in locales) {
+      try {
+        await control.checkpoint();
+        final configured = specific[locale]?.trim();
+        final expected = configured != null && configured.isNotEmpty
+            ? configured
+            : defaultName;
+        if (expected.isEmpty) {
+          available.add('$locale: skipped, empty configured app name');
+          rows[locale] = {'expected': expected, 'skipped': true};
+          continue;
+        }
+
+        final country = _storeCountryForLocale(locale);
+        final uri = Uri.https('itunes.apple.com', '/search', {
+          'term': expected,
+          'country': country,
+          'entity': 'software',
+          'limit': '200',
+        });
+        final response = await http.get(uri);
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw StateError(
+              'Search API returned ${response.statusCode}: ${response.body}');
+        }
+        final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+        final results = (decoded['results'] as List?) ?? const [];
+        final expectedNorm = _normalizedAppName(expected);
+        final matching = <Map<String, dynamic>>[];
+        for (final item in results) {
+          if (item is! Map<String, dynamic>) continue;
+          final trackName = (item['trackName'] ?? '').toString();
+          if (_normalizedAppName(trackName) != expectedNorm) continue;
+          final trackId = (item['trackId'] ?? '').toString();
+          final remoteBundleId = (item['bundleId'] ?? '').toString();
+          final isOwnApp = (ownAppId.isNotEmpty && trackId == ownAppId) ||
+              (bundleId.isNotEmpty && remoteBundleId == bundleId);
+          if (!isOwnApp) matching.add(item);
+        }
+
+        rows[locale] = {
+          'expected': expected,
+          'country': country,
+          'conflicts': matching
+              .map((item) => {
+                    'trackId': item['trackId'],
+                    'trackName': item['trackName'],
+                    'sellerName': item['sellerName'],
+                    'bundleId': item['bundleId'],
+                    'trackViewUrl': item['trackViewUrl'],
+                  })
+              .toList(),
+        };
+
+        if (matching.isEmpty) {
+          available.add('$locale/$country: "$expected" no exact public match');
+        } else {
+          final names = matching.map((item) {
+            final seller = (item['sellerName'] ?? '').toString();
+            final trackId = (item['trackId'] ?? '').toString();
+            final remoteBundleId = (item['bundleId'] ?? '').toString();
+            return '$seller, appId=$trackId, bundle=$remoteBundleId';
+          }).join('; ');
+          conflicts
+              .add('$locale/$country: "$expected" exact public match → $names');
+        }
+      } on CancelledException {
+        rethrow;
+      } catch (e) {
+        final reason = _failureReason(e);
+        checkErrors.add('$locale: $reason');
+        rows[locale] = {'error': reason};
+      }
+    }
+
+    final report = {
+      'locales': rows,
+    };
+
+    final hasIssues = conflicts.isNotEmpty || checkErrors.isNotEmpty;
+    final summary = StringBuffer()
+      ..writeln('App Name Availability Summary')
+      ..writeln(
+          'Source: public App Store Search API, exact public matches only')
+      ..writeln('Note: this is not an App Store Connect reservation check.');
+    if (conflicts.isNotEmpty) {
+      summary.writeln('Possible conflicts (${conflicts.length}):');
+      for (final line in conflicts) {
+        summary.writeln('- $line');
+      }
+    }
+    if (available.isNotEmpty) {
+      summary.writeln('No exact public match (${available.length}):');
+      for (final line in available) {
+        summary.writeln('- $line');
+      }
+    }
+    if (checkErrors.isNotEmpty) {
+      summary.writeln('Check errors (${checkErrors.length}):');
+      for (final line in checkErrors) {
+        summary.writeln('- $line');
+      }
+    }
+
+    final text = summary.toString().trimRight();
+    if (hasIssues) {
+      _log.error(text, scope: 'app-name');
+    } else {
+      _log.success(text, scope: 'app-name');
+    }
     return report;
   }
 
   int _countLocal(Directory dir) {
     if (!dir.existsSync()) return 0;
-    return dir
-        .listSync()
-        .whereType<File>()
-        .where((f) {
-          final n = p.basename(f.path).toLowerCase();
-          if (n.startsWith('.')) return false;
-          return n.endsWith('.png') ||
-              n.endsWith('.jpg') ||
-              n.endsWith('.jpeg');
-        })
-        .length;
+    return dir.listSync().whereType<File>().where((f) {
+      final n = p.basename(f.path).toLowerCase();
+      if (n.startsWith('.')) return false;
+      return n.endsWith('.png') || n.endsWith('.jpg') || n.endsWith('.jpeg');
+    }).length;
   }
 
   Future<Map<String, dynamic>> checkStatus() async {

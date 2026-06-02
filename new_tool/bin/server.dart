@@ -8,30 +8,63 @@ import 'package:asc_upload_tool/services/workspace.dart';
 import 'package:mime/mime.dart';
 import 'package:path/path.dart' as p;
 
-const int kPort = 3000;
+const int kDefaultPort = 3000;
 
 /// Global server state — one workspace + orchestrator at a time (local tool).
 OrchestratorRuntime? _runtime;
 Orchestrator? _orch;
 Future<void>? _activeTask;
+int _boundPort = kDefaultPort;
 
 Future<void> main(List<String> args) async {
   final webDir = _locateWebDir();
+  final preferredPort = _resolvePort(args);
   // Bind on IPv6 with v6Only=false so the same socket accepts BOTH IPv6
   // (::1) and IPv4 (127.0.0.1) loopback. Firefox resolves `localhost` to
   // ::1 first, and a server bound only to 127.0.0.1 will intermittently
   // appear unreachable ("Failed to fetch"). Binding dual-stack fixes it.
-  final server =
-      await HttpServer.bind(InternetAddress.anyIPv6, kPort, v6Only: false);
+  final server = await _bindServer(preferredPort);
+  _boundPort = server.port;
   server.autoCompress = true;
-  print('ASC upload tool listening on http://localhost:$kPort');
+  print('ASC upload tool listening on http://localhost:$_boundPort');
 
   // Auto-open browser (macOS/Linux/Windows best-effort).
-  unawaited(_openBrowser('http://localhost:$kPort'));
+  unawaited(_openBrowser('http://localhost:$_boundPort'));
 
   await for (final req in server) {
     unawaited(_handle(req, webDir));
   }
+}
+
+int _resolvePort(List<String> args) {
+  for (var i = 0; i < args.length; i++) {
+    final arg = args[i];
+    if (arg == '--port' && i + 1 < args.length) {
+      return int.tryParse(args[i + 1]) ?? kDefaultPort;
+    }
+    if (arg.startsWith('--port=')) {
+      return int.tryParse(arg.substring('--port='.length)) ?? kDefaultPort;
+    }
+  }
+  return int.tryParse(Platform.environment['PORT'] ?? '') ?? kDefaultPort;
+}
+
+Future<HttpServer> _bindServer(int preferredPort) async {
+  SocketException? lastError;
+  for (var offset = 0; offset <= 20; offset++) {
+    final port = preferredPort + offset;
+    try {
+      return await HttpServer.bind(
+        InternetAddress.anyIPv6,
+        port,
+        v6Only: false,
+      );
+    } on SocketException catch (e) {
+      lastError = e;
+    }
+  }
+  throw StateError(
+      'Could not bind ports $preferredPort-${preferredPort + 20}: $lastError');
 }
 
 Directory _locateWebDir() {
@@ -102,7 +135,7 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
       if (path == '/health') {
         await _json(req, {
           'ok': true,
-          'port': kPort,
+          'port': _boundPort,
           'ts': DateTime.now().toIso8601String()
         });
         return;
@@ -205,7 +238,86 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
           return;
         case '/action/check-screenshots':
           await _runAction(req, 'Check Screenshots', () async {
-            await _orch!.checkScreenshots();
+            final report = await _orch!.checkScreenshots();
+            _logJsonReport('Screenshot ASC report', report, scope: 'check-ss');
+          });
+          return;
+        case '/action/check-metadata-all':
+          await _runAction(req, 'Check All Metadata', () async {
+            final report = await _orch!.checkMetadata();
+            _logJsonReport('Metadata ASC report', report,
+                scope: 'metadata-check');
+          });
+          return;
+        case '/action/check-metadata-name':
+          await _runAction(req, 'Check Name', () async {
+            final report = await _orch!.checkMetadata(fields: {'name'});
+            _logJsonReport('Name ASC report', report, scope: 'metadata-check');
+          });
+          return;
+        case '/action/check-metadata-description':
+          await _runAction(req, 'Check Description', () async {
+            final report = await _orch!.checkMetadata(fields: {'description'});
+            _logJsonReport('Description ASC report', report,
+                scope: 'metadata-check');
+          });
+          return;
+        case '/action/check-metadata-keywords':
+          await _runAction(req, 'Check Keywords', () async {
+            final report = await _orch!.checkMetadata(fields: {'keywords'});
+            _logJsonReport('Keywords ASC report', report,
+                scope: 'metadata-check');
+          });
+          return;
+        case '/action/check-metadata-subtitle':
+          await _runAction(req, 'Check Subtitle', () async {
+            final report = await _orch!.checkMetadata(fields: {'subtitle'});
+            _logJsonReport('Subtitle ASC report', report,
+                scope: 'metadata-check');
+          });
+          return;
+        case '/action/check-metadata-release-notes':
+          await _runAction(req, 'Check Release Notes', () async {
+            final report =
+                await _orch!.checkMetadata(fields: {'release-notes'});
+            _logJsonReport('Release Notes ASC report', report,
+                scope: 'metadata-check');
+          });
+          return;
+        case '/action/check-metadata-marketing-url':
+          await _runAction(req, 'Check Marketing URL', () async {
+            final report =
+                await _orch!.checkMetadata(fields: {'marketing-url'});
+            _logJsonReport('Marketing URL ASC report', report,
+                scope: 'metadata-check');
+          });
+          return;
+        case '/action/check-metadata-support-url':
+          await _runAction(req, 'Check Support URL', () async {
+            final report = await _orch!.checkMetadata(fields: {'support-url'});
+            _logJsonReport('Support URL ASC report', report,
+                scope: 'metadata-check');
+          });
+          return;
+        case '/action/check-metadata-privacy-url':
+          await _runAction(req, 'Check Privacy URL', () async {
+            final report = await _orch!.checkMetadata(fields: {'privacy-url'});
+            _logJsonReport('Privacy URL ASC report', report,
+                scope: 'metadata-check');
+          });
+          return;
+        case '/action/check-metadata-copyright':
+          await _runAction(req, 'Check Copyright', () async {
+            final report = await _orch!.checkMetadata(fields: {'copyright'});
+            _logJsonReport('Copyright ASC report', report,
+                scope: 'metadata-check');
+          });
+          return;
+        case '/action/check-metadata-category':
+          await _runAction(req, 'Check Category', () async {
+            final report = await _orch!.checkMetadata(fields: {'category'});
+            _logJsonReport('Category ASC report', report,
+                scope: 'metadata-check');
           });
           return;
         case '/action/check-app-names':
@@ -432,6 +544,13 @@ Future<void> _runSyncAction(
     req.response.write('$e');
     await req.response.close();
   }
+}
+
+void _logJsonReport(String title, Map<String, dynamic> report,
+    {required String scope}) {
+  LoggingService.instance.info(
+      '$title:\n${const JsonEncoder.withIndent('  ').convert(report)}',
+      scope: scope);
 }
 
 Future<void> _handleSetLocales(HttpRequest req) async {

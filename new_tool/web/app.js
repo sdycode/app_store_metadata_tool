@@ -105,10 +105,12 @@ document.querySelectorAll('.tab').forEach((t) => {
     document.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
     t.classList.add('active');
     state.tab = t.dataset.tab;
+    renderTabScopedActions();
     renderMismatch();
     postOptions();
   });
 });
+renderTabScopedActions();
 
 $('#ss-force-replace').addEventListener('change', (e) => {
   state.forcefulReplace = e.target.checked;
@@ -303,6 +305,7 @@ async function uploadWorkspace() {
 // ---- Actions --------------------------------------------------------------
 async function runAction(path) {
   try {
+    await postLocales();
     await postOptions();
     const resp = await fetch(path, { method: 'POST' });
     if (resp.status === 400) alert('Pick a folder first.');
@@ -411,6 +414,7 @@ function applyStatus(s) {
     renderKeywordBlock();
     renderFallbackUsage();
     renderMismatch();
+    renderTabScopedActions();
     renderExtracted(s.extracted);
     updateActionGate();
   }
@@ -469,6 +473,13 @@ function renderMismatch() {
 function setActionsEnabled(enabled) {
   document.querySelectorAll('[data-action]').forEach((b) => {
     b.disabled = !enabled;
+  });
+}
+
+function renderTabScopedActions() {
+  const isLiveUpdate = state.tab === 'live-update';
+  document.querySelectorAll('[data-live-only]').forEach((el) => {
+    el.classList.toggle('hidden', !isLiveUpdate);
   });
 }
 

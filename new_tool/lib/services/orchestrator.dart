@@ -97,6 +97,33 @@ class _LocaleUploadFailure {
   String get copyLine => '$step | $locale | $reason';
 }
 
+const Map<String, String> _metadataCheckLabels = {
+  'name': 'Name',
+  'description': 'Description',
+  'keywords': 'Keywords',
+  'subtitle': 'Subtitle',
+  'release-notes': 'Release Notes',
+  'marketing-url': 'Marketing URL',
+  'support-url': 'Support URL',
+  'privacy-url': 'Privacy URL',
+  'copyright': 'Copyright',
+  'category': 'Category',
+};
+
+const Set<String> _versionLocaleCheckFields = {
+  'description',
+  'keywords',
+  'subtitle',
+  'release-notes',
+  'marketing-url',
+  'support-url',
+};
+
+const Set<String> _appInfoLocaleCheckFields = {
+  'name',
+  'privacy-url',
+};
+
 class OrchestratorRuntime {
   final Workspace workspace;
   final AuthService auth;
@@ -209,6 +236,160 @@ class Orchestrator {
     final text = error.toString().trim();
     if (text.isEmpty) return error.runtimeType.toString();
     return text.replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  void _addUnique(List<String> target, String value) {
+    if (!target.contains(value)) target.add(value);
+  }
+
+  String _metadataLabel(String field) => _metadataCheckLabels[field] ?? field;
+
+  String _metadataFieldList(Iterable<String> fields) =>
+      fields.map(_metadataLabel).join(', ');
+
+  Map<String, AscResource> _byLocale(List<AscResource> resources) {
+    final out = <String, AscResource>{};
+    for (final resource in resources) {
+      final locale = (resource.attributes['locale'] ?? '').toString();
+      if (locale.isNotEmpty) out[locale] = resource;
+    }
+    return out;
+  }
+
+  Future<AscResource?> _findVersionForChecks(String appId) async {
+    final updateVersion = r.workspace.config.metadata.updateVersion.trim();
+    if (updateVersion.isNotEmpty) {
+      final exact = await r.versions.findByVersionString(appId, updateVersion);
+      if (exact != null) return exact;
+    }
+    return r.versions.findEditable(appId);
+  }
+
+  String _versionAttrForCheckField(String field) {
+    switch (field) {
+      case 'description':
+        return 'description';
+      case 'keywords':
+        return 'keywords';
+      case 'subtitle':
+        return 'subtitle';
+      case 'release-notes':
+        return 'whatsNew';
+      case 'marketing-url':
+        return 'marketingUrl';
+      case 'support-url':
+        return 'supportUrl';
+    }
+    throw StateError('Unknown version metadata check field: $field');
+  }
+
+  String _sourceFileForVersionField(String field) {
+    switch (field) {
+      case 'description':
+        return 'description.json';
+      case 'keywords':
+        return 'keywords.json';
+      case 'subtitle':
+        return 'subtitle.json';
+      case 'release-notes':
+        return 'releasenotes.json';
+      case 'marketing-url':
+        return 'config.json metadata.marketing_url';
+      case 'support-url':
+        return 'config.json metadata.support_url';
+    }
+    throw StateError('Unknown version metadata check field: $field');
+  }
+
+  String _localVersionValue(Workspace ws, String field, String locale) {
+    switch (field) {
+      case 'description':
+        return ws.textFor(ws.descriptions, locale, ws.config.defaultLanguage);
+      case 'keywords':
+        return ws.textFor(ws.keywords, locale, ws.config.defaultLanguage);
+      case 'subtitle':
+        return ws.textFor(ws.subtitles, locale, ws.config.defaultLanguage);
+      case 'release-notes':
+        return ws.textFor(ws.releaseNotes, locale, ws.config.defaultLanguage);
+      case 'marketing-url':
+        return (ws.config.metadata.marketingUrl ?? '').trim();
+      case 'support-url':
+        return (ws.config.metadata.supportUrl ?? '').trim();
+    }
+    throw StateError('Unknown version metadata check field: $field');
+  }
+
+  bool _hasOwnVersionValue(Workspace ws, String field, String locale) {
+    switch (field) {
+      case 'description':
+        return ws.descriptions.containsKey(locale);
+      case 'keywords':
+        return ws.keywords.containsKey(locale);
+      case 'subtitle':
+        return ws.subtitles.containsKey(locale);
+      case 'release-notes':
+        return ws.releaseNotes.containsKey(locale);
+      case 'marketing-url':
+      case 'support-url':
+        return true;
+    }
+    throw StateError('Unknown version metadata check field: $field');
+  }
+
+  String _appInfoAttrForCheckField(String field) {
+    switch (field) {
+      case 'name':
+        return 'name';
+      case 'privacy-url':
+        return 'privacyPolicyUrl';
+    }
+    throw StateError('Unknown app-info metadata check field: $field');
+  }
+
+  String _localAppInfoValue(Workspace ws, String field, String locale) {
+    switch (field) {
+      case 'name':
+        final specific = ws.config.specificNameLocales[locale]?.trim();
+        if (specific != null && specific.isNotEmpty) return specific;
+        return (ws.config.metadata.name ?? '').trim();
+      case 'privacy-url':
+        return (ws.config.metadata.privacyUrl ?? '').trim();
+    }
+    throw StateError('Unknown app-info metadata check field: $field');
+  }
+
+  bool _hasOwnAppInfoValue(Workspace ws, String field, String locale) {
+    switch (field) {
+      case 'name':
+        final specific = ws.config.specificNameLocales[locale]?.trim();
+        return specific != null && specific.isNotEmpty;
+      case 'privacy-url':
+        return true;
+    }
+    throw StateError('Unknown app-info metadata check field: $field');
+  }
+
+  bool _isValidHttpUrl(String value) {
+    final uri = Uri.tryParse(value);
+    return uri != null &&
+        uri.isAbsolute &&
+        (uri.scheme == 'http' || uri.scheme == 'https');
+  }
+
+  String _lengthLabel(String value) => '${value.length} chars';
+
+  String? _relationshipId(dynamic relationship) {
+    if (relationship is! Map) return null;
+    final data = relationship['data'];
+    if (data is! Map) return null;
+    final id = data['id'];
+    return id?.toString();
+  }
+
+  Future<String?> _readPrimaryCategoryId(String appInfoId) async {
+    final json = await r.client
+        .getJson('/v1/appInfos/$appInfoId/relationships/primaryCategory');
+    return _relationshipId(json);
   }
 
   void _recordLocaleFailure(
@@ -490,8 +671,21 @@ class Orchestrator {
       _runPerLocaleVersionField('keywords', 'keywords');
   Future<void> updateSubtitle() =>
       _runPerLocaleVersionField('subtitle', 'subtitle');
-  Future<void> updateReleaseNotes() =>
-      _runPerLocaleVersionField('whatsNew', 'release notes');
+  bool get _releaseNotesActionsAllowed =>
+      liveUpdateMode &&
+      r.workspace.config.metadata.updateVersion.trim().isNotEmpty;
+
+  String get _releaseNotesLiveOnlyMessage =>
+      'Release Notes is available only on the Live Update tab with a non-empty config.json metadata.update_version';
+
+  Future<void> updateReleaseNotes() async {
+    if (!_releaseNotesActionsAllowed) {
+      _log.warn(_releaseNotesLiveOnlyMessage, scope: 'orchestrator');
+      return;
+    }
+    await _runPerLocaleVersionField('whatsNew', 'release notes');
+  }
+
   Future<void> updateMarketingUrl() =>
       _runPerLocaleVersionField('marketingUrl', 'marketing URL');
   Future<void> updateSupportUrl() =>
@@ -724,22 +918,388 @@ class Orchestrator {
     _logLocaleFailureSummary('Upload All', failures);
   }
 
+  Future<Map<String, dynamic>> checkMetadata({Set<String>? fields}) async {
+    final ws = r.workspace;
+    final allApplicableFields = _metadataCheckLabels.keys
+        .where(
+            (field) => field != 'release-notes' || _releaseNotesActionsAllowed)
+        .toSet();
+    final requested =
+        fields == null || fields.isEmpty ? allApplicableFields : fields.toSet();
+    final unknown = requested
+        .where((field) => !_metadataCheckLabels.containsKey(field))
+        .toList(growable: false);
+    if (unknown.isNotEmpty) {
+      throw StateError(
+          'Unknown metadata check field(s): ${unknown.join(', ')}');
+    }
+    if (requested.contains('release-notes') && !_releaseNotesActionsAllowed) {
+      _log.warn(_releaseNotesLiveOnlyMessage, scope: 'metadata-check');
+      requested.remove('release-notes');
+      if (requested.isEmpty) {
+        return {
+          'fields': const ['release-notes'],
+          'locales': _effectiveLocales(),
+          'skipped': true,
+          'reason': _releaseNotesLiveOnlyMessage,
+        };
+      }
+    }
+    final orderedFields = _metadataCheckLabels.keys
+        .where(requested.contains)
+        .toList(growable: false);
+    final locales = _effectiveLocales();
+    final report = <String, dynamic>{
+      'source': 'App Store Connect',
+      'fields': orderedFields,
+      'locales': locales,
+    };
+    if (locales.isEmpty) {
+      _log.warn('No locales selected; nothing to check',
+          scope: 'metadata-check');
+      return report;
+    }
+
+    final localIssues = <String>[];
+    final localFallbacks = <String>[];
+    final remoteMissing = <String>[];
+    final mismatches = <String>[];
+    final checkErrors = <String>[];
+    final rows = <String, dynamic>{};
+
+    final app = await r.apps.findByBundleId(ws.config.metadata.packageId);
+    if (app == null) {
+      final msg = 'App not found for bundle ${ws.config.metadata.packageId}';
+      _log.error('Check Metadata failed: $msg', scope: 'metadata-check');
+      report['error'] = msg;
+      return report;
+    }
+    report['app'] = {
+      'id': app.id,
+      'bundleId': app.attributes['bundleId'],
+      'name': app.attributes['name'],
+    };
+    _log.info(
+        'ASC metadata check: app=${app.id}, bundle=${ws.config.metadata.packageId}, selectedLocales=${locales.length}, fields=${_metadataFieldList(orderedFields)}',
+        scope: 'metadata-check');
+
+    final needsVersion =
+        orderedFields.any(_versionLocaleCheckFields.contains) ||
+            orderedFields.contains('copyright');
+    AscResource? version;
+    final versionByLocale = <String, AscResource>{};
+    if (needsVersion) {
+      try {
+        version = await _findVersionForChecks(app.id);
+        if (version == null) {
+          _addUnique(
+            checkErrors,
+            ws.config.metadata.updateVersion.trim().isEmpty
+                ? 'No editable ASC version found; version metadata checks skipped'
+                : 'ASC version "${ws.config.metadata.updateVersion}" not found; version metadata checks skipped',
+          );
+        } else {
+          report['version'] = {
+            'id': version.id,
+            'versionString': version.attributes['versionString'],
+            'state': version.attributes['appStoreState'],
+          };
+          versionByLocale.addAll(_byLocale(await r.locs.list(version.id)));
+          _log.info(
+              'ASC version metadata read: version=${version.id}, localizations=${versionByLocale.length}',
+              scope: 'metadata-check');
+        }
+      } catch (e) {
+        _addUnique(
+            checkErrors, 'Version metadata read failed: ${_failureReason(e)}');
+      }
+    }
+
+    final needsAppInfo =
+        orderedFields.any(_appInfoLocaleCheckFields.contains) ||
+            orderedFields.contains('category');
+    AscResource? appInfo;
+    final appInfoByLocale = <String, AscResource>{};
+    String? remoteCategoryId;
+    if (needsAppInfo) {
+      try {
+        appInfo = await r.appInfo.findEditable(app.id);
+        report['appInfo'] = {
+          'id': appInfo.id,
+          'state': appInfo.attributes['appStoreState'],
+        };
+        appInfoByLocale
+            .addAll(_byLocale(await r.appInfo.listLocalizations(appInfo.id)));
+        _log.info(
+            'ASC app-info metadata read: appInfo=${appInfo.id}, localizations=${appInfoByLocale.length}',
+            scope: 'metadata-check');
+        if (orderedFields.contains('category')) {
+          remoteCategoryId =
+              _relationshipId(appInfo.relationships['primaryCategory']);
+          try {
+            remoteCategoryId ??= await _readPrimaryCategoryId(appInfo.id);
+          } catch (e) {
+            _addUnique(checkErrors,
+                'Category relationship read failed: ${_failureReason(e)}');
+          }
+        }
+      } catch (e) {
+        _addUnique(
+            checkErrors, 'App-info metadata read failed: ${_failureReason(e)}');
+      }
+    }
+
+    for (final locale in locales) {
+      final row = <String, dynamic>{};
+      final versionLoc = versionByLocale[locale];
+      final appInfoLoc = appInfoByLocale[locale];
+
+      for (final field in orderedFields) {
+        if (!_versionLocaleCheckFields.contains(field)) continue;
+        final label = _metadataLabel(field);
+        final source = _sourceFileForVersionField(field);
+        if (field == 'release-notes' &&
+            ws.config.metadata.updateVersion.trim().isEmpty) {
+          row[field] = {
+            'local': 'not-applicable',
+            'remote': 'not-applicable',
+            'reason':
+                'release notes are not sent for an initial editable version',
+          };
+          continue;
+        }
+
+        final expected = _localVersionValue(ws, field, locale);
+        final hasOwn = _hasOwnVersionValue(ws, field, locale);
+        final fieldRow = <String, dynamic>{
+          'localLength': expected.length,
+          'localSource': hasOwn ? 'own' : ws.config.defaultLanguage,
+        };
+        row[field] = fieldRow;
+
+        if (!hasOwn && locale != ws.config.defaultLanguage) {
+          _addUnique(localFallbacks,
+              '$locale / $label: no own value in $source; using ${ws.config.defaultLanguage}');
+        }
+        if (expected.isEmpty) {
+          _addUnique(
+              localIssues, '$locale / $label: local value missing in $source');
+        }
+        if (field == 'keywords' && expected.length > 100) {
+          _addUnique(localIssues,
+              '$locale / Keywords: local value is ${expected.length} chars (Apple limit 100)');
+        }
+        if ((field == 'marketing-url' || field == 'support-url') &&
+            expected.isNotEmpty &&
+            !_isValidHttpUrl(expected)) {
+          _addUnique(
+              localIssues, '$locale / $label: local URL is not http/https');
+        }
+
+        if (version == null) {
+          fieldRow['remote'] = 'no-version';
+          continue;
+        }
+        if (versionLoc == null) {
+          fieldRow['remote'] = 'missing-localization';
+          _addUnique(remoteMissing,
+              '$locale / $label: ASC version localization missing');
+          continue;
+        }
+        final attr = _versionAttrForCheckField(field);
+        final actual = (versionLoc.attributes[attr] ?? '').toString();
+        fieldRow['remoteLength'] = actual.length;
+        if (actual.isEmpty) {
+          fieldRow['remote'] = 'missing';
+          _addUnique(remoteMissing, '$locale / $label: ASC field is empty');
+        } else if (expected.isNotEmpty && actual != expected) {
+          fieldRow['remote'] = 'mismatch';
+          _addUnique(mismatches,
+              '$locale / $label: local ${_lengthLabel(expected)}, ASC ${_lengthLabel(actual)}');
+        } else {
+          fieldRow['remote'] = 'ok';
+        }
+      }
+
+      for (final field in orderedFields) {
+        if (!_appInfoLocaleCheckFields.contains(field)) continue;
+        final label = _metadataLabel(field);
+        final source = field == 'name'
+            ? 'config.json metadata.name / specific_name_locales'
+            : 'config.json metadata.privacy_url';
+        final expected = _localAppInfoValue(ws, field, locale);
+        final hasOwn = _hasOwnAppInfoValue(ws, field, locale);
+        final fieldRow = <String, dynamic>{
+          'localLength': expected.length,
+          'localSource': hasOwn || field != 'name' ? 'config' : 'metadata.name',
+        };
+        row[field] = fieldRow;
+
+        if (field == 'name' && !hasOwn && locale != ws.config.defaultLanguage) {
+          _addUnique(localFallbacks,
+              '$locale / Name: no specific_name_locales value; using metadata.name');
+        }
+        if (expected.isEmpty) {
+          _addUnique(
+              localIssues, '$locale / $label: local value missing in $source');
+        }
+        if (field == 'privacy-url' &&
+            expected.isNotEmpty &&
+            !_isValidHttpUrl(expected)) {
+          _addUnique(localIssues,
+              '$locale / Privacy URL: local URL is not http/https');
+        }
+
+        if (appInfo == null) {
+          fieldRow['remote'] = 'no-app-info';
+          continue;
+        }
+        if (appInfoLoc == null) {
+          fieldRow['remote'] = 'missing-localization';
+          _addUnique(remoteMissing,
+              '$locale / $label: ASC app-info localization missing');
+          continue;
+        }
+        final attr = _appInfoAttrForCheckField(field);
+        final actual = (appInfoLoc.attributes[attr] ?? '').toString();
+        fieldRow['remoteLength'] = actual.length;
+        if (actual.isEmpty) {
+          fieldRow['remote'] = 'missing';
+          _addUnique(remoteMissing, '$locale / $label: ASC field is empty');
+        } else if (expected.isNotEmpty && actual != expected) {
+          fieldRow['remote'] = 'mismatch';
+          _addUnique(mismatches,
+              '$locale / $label: local ${_lengthLabel(expected)}, ASC ${_lengthLabel(actual)}');
+        } else {
+          fieldRow['remote'] = 'ok';
+        }
+      }
+
+      rows[locale] = row;
+    }
+
+    if (orderedFields.contains('copyright')) {
+      final expected = (ws.config.metadata.copyright ?? '').trim();
+      final actual = (version?.attributes['copyright'] ?? '').toString();
+      report['copyright'] = {
+        'localLength': expected.length,
+        'remoteLength': actual.length,
+      };
+      if (expected.isEmpty) {
+        _addUnique(localIssues,
+            'Copyright: local value missing in config.json metadata.copyright');
+      }
+      if (version == null) {
+        _addUnique(remoteMissing, 'Copyright: no ASC version found');
+      } else if (actual.isEmpty) {
+        _addUnique(remoteMissing, 'Copyright: ASC field is empty');
+      } else if (expected.isNotEmpty && actual != expected) {
+        _addUnique(mismatches,
+            'Copyright: local ${_lengthLabel(expected)}, ASC ${_lengthLabel(actual)}');
+      }
+    }
+
+    if (orderedFields.contains('category')) {
+      final expected = (ws.config.metadata.primaryCategory ?? '').trim();
+      report['category'] = {
+        'local': expected,
+        'remote': remoteCategoryId,
+      };
+      if (expected.isEmpty) {
+        _addUnique(localIssues,
+            'Category: local value missing in config.json metadata.primary_category');
+      }
+      if (appInfo == null) {
+        _addUnique(remoteMissing, 'Category: no editable ASC appInfo found');
+      } else if ((remoteCategoryId ?? '').isEmpty) {
+        _addUnique(remoteMissing, 'Category: ASC primary category is empty');
+      } else if (expected.isNotEmpty && remoteCategoryId != expected) {
+        _addUnique(
+            mismatches, 'Category: local "$expected", ASC "$remoteCategoryId"');
+      }
+    }
+
+    report['metadata'] = rows;
+    report['summary'] = {
+      'localIssues': localIssues,
+      'localFallbacks': localFallbacks,
+      'remoteMissing': remoteMissing,
+      'mismatches': mismatches,
+      'checkErrors': checkErrors,
+    };
+
+    final title = orderedFields.length == allApplicableFields.length
+        ? 'Check Metadata Summary'
+        : 'Check ${_metadataFieldList(orderedFields)} Summary';
+    final summary = StringBuffer()
+      ..writeln(title)
+      ..writeln('Selected locales (${locales.length}): ${locales.join(', ')}')
+      ..writeln('Fields: ${_metadataFieldList(orderedFields)}');
+    void section(String name, List<String> lines) {
+      if (lines.isEmpty) return;
+      summary.writeln('$name (${lines.length}):');
+      for (final line in lines) {
+        summary.writeln('- $line');
+      }
+    }
+
+    section('Local missing / invalid', localIssues);
+    section('Local fallback values', localFallbacks);
+    section('Missing on ASC', remoteMissing);
+    section('ASC/local mismatch', mismatches);
+    section('Check errors', checkErrors);
+
+    final hasErrors = localIssues.isNotEmpty ||
+        remoteMissing.isNotEmpty ||
+        mismatches.isNotEmpty ||
+        checkErrors.isNotEmpty;
+    final text = summary.toString().trimRight();
+    if (hasErrors) {
+      _log.error(text, scope: 'metadata-check');
+    } else if (localFallbacks.isNotEmpty) {
+      _log.warn(text, scope: 'metadata-check');
+    } else {
+      _log.success('$text\nAll checked metadata is present and matches ASC.',
+          scope: 'metadata-check');
+    }
+    return report;
+  }
+
   Future<Map<String, dynamic>> checkScreenshots() async {
     final ws = r.workspace;
-    final locales = _effectiveLocales().isEmpty
-        ? ws.config.localizations
-        : _effectiveLocales();
+    final locales = _effectiveLocales();
+    if (locales.isEmpty) {
+      _log.warn('No locales selected; nothing to check', scope: 'check-ss');
+      return const {
+        'source': 'App Store Connect',
+        'locales': <String, dynamic>{},
+      };
+    }
     final app = await r.apps.requireByBundleId(ws.config.metadata.packageId);
-    final version = await r.versions.findEditable(app.id) ??
-        await r.versions.getOrCreate(
-          appId: app.id,
-          updateVersion: ws.config.metadata.updateVersion,
-        );
+    final version = await _findVersionForChecks(app.id);
+    if (version == null) {
+      final message = ws.config.metadata.updateVersion.trim().isEmpty
+          ? 'No editable ASC version found; cannot check screenshots'
+          : 'ASC version "${ws.config.metadata.updateVersion}" not found; cannot check screenshots';
+      _log.error(message, scope: 'check-ss');
+      return {
+        'source': 'App Store Connect',
+        'app': app.id,
+        'versionId': null,
+        'error': message,
+        'locales': <String, dynamic>{},
+      };
+    }
     final localizations = await r.locs.list(version.id);
+    _log.info(
+        'ASC screenshot check: app=${app.id}, version=${version.id}, selectedLocales=${locales.length}',
+        scope: 'check-ss');
     final report = <String, dynamic>{
+      'source': 'App Store Connect',
       'app': app.id,
       'versionId': version.id,
       'versionString': version.attributes['versionString'],
+      'selectedLocales': locales,
     };
     final rows = <String, dynamic>{};
     final notUploaded = <String>[];
@@ -1042,10 +1602,29 @@ class Orchestrator {
 
   Future<Map<String, dynamic>> checkStatus() async {
     final ws = r.workspace;
-    final report = <String, dynamic>{};
+    final locales = _effectiveLocales();
+    final report = <String, dynamic>{
+      'source': 'App Store Connect',
+      'selectedLocales': locales,
+    };
+    if (locales.isEmpty) {
+      _log.warn('No locales selected; nothing to check', scope: 'status');
+      return report;
+    }
+
+    final missingLocalizations = <String>[];
+    final missingMetadata = <String>[];
+    final missingScreenshots = <String>[];
+    final missingAppInfo = <String>[];
+    final globalMissing = <String>[];
+    final checkErrors = <String>[];
+
     final app = await r.apps.findByBundleId(ws.config.metadata.packageId);
     if (app == null) {
       report['app'] = null;
+      _log.error(
+          'Check Status: app not found for bundle ${ws.config.metadata.packageId}',
+          scope: 'status');
       return report;
     }
     report['app'] = {
@@ -1053,6 +1632,10 @@ class Orchestrator {
       'bundleId': app.attributes['bundleId'],
       'name': app.attributes['name'],
     };
+    _log.info(
+        'ASC status check: app=${app.id}, bundle=${ws.config.metadata.packageId}, selectedLocales=${locales.length}',
+        scope: 'status');
+
     final versions = await r.versions.listVersions(app.id);
     report['versions'] = versions
         .map((v) => {
@@ -1061,12 +1644,34 @@ class Orchestrator {
               'state': v.attributes['appStoreState'],
             })
         .toList();
-    final editable = await r.versions.findEditable(app.id);
-    if (editable != null) {
+
+    final editable = await _findVersionForChecks(app.id);
+    if (editable == null) {
+      _addUnique(
+          checkErrors,
+          ws.config.metadata.updateVersion.trim().isEmpty
+              ? 'No editable ASC version found'
+              : 'ASC version "${ws.config.metadata.updateVersion}" not found');
+    } else {
+      report['checkedVersion'] = {
+        'id': editable.id,
+        'versionString': editable.attributes['versionString'],
+        'state': editable.attributes['appStoreState'],
+      };
+      final copyright = (editable.attributes['copyright'] ?? '').toString();
+      if (copyright.isEmpty) {
+        globalMissing.add('Copyright: ASC version copyright is empty');
+      }
       final locs = await r.locs.list(editable.id);
+      final locByLocale = _byLocale(locs);
       final locSummary = <String, dynamic>{};
-      for (final l in locs) {
-        final locale = (l.attributes['locale'] ?? '').toString();
+      for (final locale in locales) {
+        final l = locByLocale[locale];
+        if (l == null) {
+          locSummary[locale] = {'localization': 'missing'};
+          missingLocalizations.add(locale);
+          continue;
+        }
         final shots = <String, int>{};
         final sets = await r.screenshots.listSets(l.id);
         for (final s in sets) {
@@ -1075,17 +1680,82 @@ class Orchestrator {
           final shotsList = await r.screenshots.listShots(s.id);
           shots[display] = shotsList.length;
         }
+        final remoteShotTotal = shots.values.fold<int>(0, (a, b) => a + b);
+        if (remoteShotTotal == 0) {
+          missingScreenshots.add('$locale: no ASC screenshots');
+        }
+        final attrChecks = <String, String>{
+          'description': 'Description',
+          'keywords': 'Keywords',
+          'subtitle': 'Subtitle',
+          if (ws.config.metadata.updateVersion.trim().isNotEmpty)
+            'whatsNew': 'Release Notes',
+          'marketingUrl': 'Marketing URL',
+          'supportUrl': 'Support URL',
+        };
+        for (final entry in attrChecks.entries) {
+          if ((l.attributes[entry.key] ?? '').toString().isEmpty) {
+            missingMetadata.add('$locale / ${entry.value}: ASC field is empty');
+          }
+        }
         locSummary[locale] = {
+          'localization': 'exists',
           'description':
               (l.attributes['description'] ?? '').toString().isNotEmpty,
           'keywords': (l.attributes['keywords'] ?? '').toString().isNotEmpty,
           'subtitle': (l.attributes['subtitle'] ?? '').toString().isNotEmpty,
           'whatsNew': (l.attributes['whatsNew'] ?? '').toString().isNotEmpty,
+          'marketingUrl':
+              (l.attributes['marketingUrl'] ?? '').toString().isNotEmpty,
+          'supportUrl':
+              (l.attributes['supportUrl'] ?? '').toString().isNotEmpty,
           'screenshots': shots,
         };
       }
       report['editableLocalizations'] = locSummary;
     }
+
+    try {
+      final appInfo = await r.appInfo.findEditable(app.id);
+      final appInfoLocs =
+          _byLocale(await r.appInfo.listLocalizations(appInfo.id));
+      final appInfoSummary = <String, dynamic>{};
+      for (final locale in locales) {
+        final loc = appInfoLocs[locale];
+        if (loc == null) {
+          appInfoSummary[locale] = {'localization': 'missing'};
+          missingAppInfo.add('$locale: ASC app-info localization missing');
+          continue;
+        }
+        final hasName = (loc.attributes['name'] ?? '').toString().isNotEmpty;
+        final hasPrivacy =
+            (loc.attributes['privacyPolicyUrl'] ?? '').toString().isNotEmpty;
+        if (!hasName) missingAppInfo.add('$locale / Name: ASC field is empty');
+        if (!hasPrivacy) {
+          missingAppInfo.add('$locale / Privacy URL: ASC field is empty');
+        }
+        appInfoSummary[locale] = {
+          'localization': 'exists',
+          'name': hasName,
+          'privacyPolicyUrl': hasPrivacy,
+        };
+      }
+      try {
+        final categoryId =
+            _relationshipId(appInfo.relationships['primaryCategory']) ??
+                await _readPrimaryCategoryId(appInfo.id);
+        report['primaryCategory'] = categoryId;
+        if ((categoryId ?? '').isEmpty) {
+          globalMissing.add('Category: ASC primary category is empty');
+        }
+      } catch (e) {
+        checkErrors.add('Category read failed: ${_failureReason(e)}');
+      }
+      report['appInfoLocalizations'] = appInfoSummary;
+    } catch (e) {
+      checkErrors.add('App-info read failed: ${_failureReason(e)}');
+    }
+
     final iaps = await r.iap.listForApp(app.id);
     report['iaps'] = iaps
         .map((i) => {
@@ -1094,6 +1764,46 @@ class Orchestrator {
               'state': i.attributes['state'],
             })
         .toList();
+    report['summary'] = {
+      'missingLocalizations': missingLocalizations,
+      'missingMetadata': missingMetadata,
+      'missingScreenshots': missingScreenshots,
+      'missingAppInfo': missingAppInfo,
+      'globalMissing': globalMissing,
+      'checkErrors': checkErrors,
+    };
+
+    final summary = StringBuffer()
+      ..writeln('Check Status Summary')
+      ..writeln('Selected locales (${locales.length}): ${locales.join(', ')}');
+    void section(String name, List<String> lines) {
+      if (lines.isEmpty) return;
+      summary.writeln('$name (${lines.length}):');
+      for (final line in lines) {
+        summary.writeln('- $line');
+      }
+    }
+
+    section('Missing ASC version localizations', missingLocalizations);
+    section('Missing ASC version metadata', missingMetadata);
+    section('Missing ASC screenshots', missingScreenshots);
+    section('Missing ASC app-info metadata', missingAppInfo);
+    section('Missing ASC global metadata', globalMissing);
+    section('Check errors', checkErrors);
+
+    final hasIssues = missingLocalizations.isNotEmpty ||
+        missingMetadata.isNotEmpty ||
+        missingScreenshots.isNotEmpty ||
+        missingAppInfo.isNotEmpty ||
+        globalMissing.isNotEmpty ||
+        checkErrors.isNotEmpty;
+    final text = summary.toString().trimRight();
+    if (hasIssues) {
+      _log.error(text, scope: 'status');
+    } else {
+      _log.success('$text\nAll selected locales have required ASC metadata.',
+          scope: 'status');
+    }
     return report;
   }
 }

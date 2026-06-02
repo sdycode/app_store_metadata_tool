@@ -415,6 +415,14 @@ button.link {
   font-size: 11.5px;
   padding: 5px 9px;
 }
+.actions.checks .section-head {
+  width: 100%;
+  margin-bottom: 2px;
+}
+.actions.checks .btn {
+  font-size: 11.5px;
+  padding: 5px 9px;
+}
 
 .run-bar {
   display: flex;

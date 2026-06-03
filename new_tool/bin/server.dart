@@ -443,6 +443,8 @@ Map<String, dynamic> _extractedSummary(Workspace ws) {
       'subtitle': pick(ws.subtitles) ?? '',
       'release_notes': pick(ws.releaseNotes) ?? '',
     },
+    'json_syntax_errors':
+        ws.jsonSyntaxErrors.map((issue) => issue.toJson()).toList(),
     'iap_count': iaps.length,
     'iaps': iaps,
     'review_image_path': ws.config.inApp?.reviewImagePath ?? '',
@@ -463,6 +465,8 @@ Map<String, dynamic> _statusSnapshot() {
             'iapCount': ws.config.inApp?.iapMetadata.length ?? 0,
             'keyFile': ws.p8Key.path,
             'warnings': ws.warnings,
+            'jsonSyntaxErrors':
+                ws.jsonSyntaxErrors.map((issue) => issue.toJson()).toList(),
           },
     'control': _orch?.control.toJson() ?? {'active': false},
     'selectedLocales': _orch?.selectedLocales.toList() ?? const [],

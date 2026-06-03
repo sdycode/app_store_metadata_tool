@@ -61,6 +61,9 @@ const el = (tag, attrs = {}, ...children) => {
   }
   return node;
 };
+const htmlEscape = (s) =>
+    String(s).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // ---- Theme ---------------------------------------------------------------
 const THEME_STORAGE_KEY = 'metadata-uploader-theme';
@@ -411,6 +414,7 @@ function applyStatus(s) {
     renderLocaleSetCard();
     renderLocales();
     renderWarnings(s.workspace.warnings || []);
+    renderJsonSyntaxBlock(s.workspace.jsonSyntaxErrors || []);
     renderKeywordBlock();
     renderFallbackUsage();
     renderMismatch();
@@ -472,7 +476,7 @@ function renderMismatch() {
 
 function setActionsEnabled(enabled) {
   document.querySelectorAll('[data-action]').forEach((b) => {
-    b.disabled = !enabled;
+    b.disabled = !enabled && b.dataset.action !== '/action/validate';
   });
 }
 
@@ -484,12 +488,16 @@ function renderTabScopedActions() {
 }
 
 /// Compound gate: actions are enabled only if NO blocking condition is
-/// active. Blocking conditions: tab↔version mismatch, keyword length >100.
+/// active. Blocking conditions: tab↔version mismatch, keyword length >100,
+/// or invalid metadata JSON. Validate stays clickable so it can report the
+/// hard failures on demand.
 function updateActionGate() {
   const tabMismatch = !$('#mismatch-card').classList.contains('hidden');
   const keywordBlocked =
       !$('#keyword-block').classList.contains('hidden');
-  setActionsEnabled(!tabMismatch && !keywordBlocked);
+  const jsonCard = $('#json-syntax-block');
+  const jsonBlocked = jsonCard && !jsonCard.classList.contains('hidden');
+  setActionsEnabled(!tabMismatch && !keywordBlocked && !jsonBlocked);
 }
 
 function renderLocaleSetCard() {
@@ -574,9 +582,6 @@ function renderExtracted(ex) {
     if (s.length <= n) return s;
     return s.slice(0, n) + '…';
   };
-  const htmlEscape = (s) =>
-      String(s).replace(/[&<>"']/g, (c) =>
-          ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const urlOrDash = (u) => {
     if (!u) return '—';
     const safe = htmlEscape(u);
@@ -592,6 +597,14 @@ function renderExtracted(ex) {
 
   const enUS = ex.en_us || {};
   const urls = ex.urls || {};
+  const jsonErrors = ex.json_syntax_errors || [];
+  const locationText = (err) =>
+      err.line && err.column ? `line ${err.line}, column ${err.column}` : 'unknown location';
+  const jsonErrorBlock = jsonErrors.length === 0 ? '' : section(
+      'JSON syntax errors',
+      jsonErrors.map((err) =>
+          kv(`<code>${htmlEscape(err.file || 'unknown')}</code>`,
+              `<span class="bad">${htmlEscape(locationText(err))}: ${htmlEscape(err.message || 'Invalid JSON')}</span>`)));
 
   const appInfo = section('App info', [
     kv('Name', htmlEscape(ex.name || '—')),
@@ -639,7 +652,7 @@ function renderExtracted(ex) {
             : '',
       ]);
 
-  body.innerHTML = appInfo + urlBlock + contentBlock + iapBlock;
+  body.innerHTML = jsonErrorBlock + appInfo + urlBlock + contentBlock + iapBlock;
   const subtitle = document.getElementById('extracted-subtitle');
   if (subtitle) {
     subtitle.textContent =
@@ -687,6 +700,30 @@ function renderWarnings(list) {
   for (const msg of list) {
     host.appendChild(el('li', {}, msg));
   }
+}
+
+function renderJsonSyntaxBlock(list) {
+  const card = $('#json-syntax-block');
+  const detail = $('#json-syntax-detail');
+  if (!card || !detail) return;
+  const errors = list || [];
+  if (errors.length === 0) {
+    card.classList.add('hidden');
+    detail.innerHTML = '';
+    return;
+  }
+  card.classList.remove('hidden');
+  const rows = errors
+      .map((err) => {
+        const loc = err.line && err.column
+            ? ` at line ${err.line}, column ${err.column}`
+            : '';
+        return `<li><code>${htmlEscape(err.file || 'unknown')}</code>${htmlEscape(loc)}: ${htmlEscape(err.message || 'Invalid JSON')}</li>`;
+      })
+      .join('');
+  detail.innerHTML =
+      'Fix the JSON syntax and load the workspace again before uploading metadata.' +
+      '<ul>' + rows + '</ul>';
 }
 
 function renderLocales() {

@@ -15,6 +15,7 @@ class Workspace {
   final Map<String, String> keywords;
   final Map<String, String> subtitles;
   final Map<String, String> releaseNotes;
+  final List<JsonSyntaxIssue> jsonSyntaxErrors;
 
   /// Non-blocking warnings raised at load time (prefix mismatches, missing
   /// assets, etc). Displayed in the UI and also logged.
@@ -28,6 +29,7 @@ class Workspace {
     required this.keywords,
     required this.subtitles,
     required this.releaseNotes,
+    this.jsonSyntaxErrors = const [],
     this.warnings = const [],
   });
 
@@ -40,6 +42,34 @@ class Workspace {
   String textFor(Map<String, String> source, String locale, String fallback) {
     return source[locale] ?? source[fallback] ?? '';
   }
+}
+
+class JsonSyntaxIssue {
+  final String fileName;
+  final String message;
+  final int? line;
+  final int? column;
+
+  JsonSyntaxIssue({
+    required this.fileName,
+    required this.message,
+    this.line,
+    this.column,
+  });
+
+  String get location {
+    if (line == null || column == null) return '';
+    return ' at line $line, column $column';
+  }
+
+  String get displayMessage => '$fileName is not valid JSON$location: $message';
+
+  Map<String, dynamic> toJson() => {
+        'file': fileName,
+        'message': message,
+        'line': line,
+        'column': column,
+      };
 }
 
 class WorkspaceHardFail implements Exception {
@@ -105,7 +135,40 @@ class WorkspaceLoader {
       p8 = await _findP8(root, cfg.creds.keyId);
     }
 
-    Future<Map<String, String>> readOne(File f) async {
+    final jsonSyntaxErrors = <JsonSyntaxIssue>[];
+
+    JsonSyntaxIssue syntaxIssue(File f, FormatException e) {
+      int? line;
+      int? column;
+      final source = e.source;
+      final offset = e.offset;
+      if (source is String && offset != null) {
+        final boundedOffset = offset.clamp(0, source.length).toInt();
+        var lineNumber = 1;
+        var columnNumber = 1;
+        for (var i = 0; i < boundedOffset; i++) {
+          if (source.codeUnitAt(i) == 10) {
+            lineNumber++;
+            columnNumber = 1;
+          } else {
+            columnNumber++;
+          }
+        }
+        line = lineNumber;
+        column = columnNumber;
+      }
+      return JsonSyntaxIssue(
+        fileName: p.basename(f.path),
+        message: e.message,
+        line: line,
+        column: column,
+      );
+    }
+
+    Future<Map<String, String>> readOne(
+      File f, {
+      bool trackSyntaxErrors = false,
+    }) async {
       try {
         final decoded = jsonDecode(await f.readAsString());
         if (decoded is Map) {
@@ -113,8 +176,13 @@ class WorkspaceLoader {
               .map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''));
         }
       } on FormatException catch (e) {
-        _log.warn('${p.basename(f.path)} invalid JSON: ${e.message}',
-            scope: 'workspace');
+        final issue = syntaxIssue(f, e);
+        if (trackSyntaxErrors) {
+          jsonSyntaxErrors.add(issue);
+          _log.error(issue.displayMessage, scope: 'workspace');
+        } else {
+          _log.warn(issue.displayMessage, scope: 'workspace');
+        }
       }
       return {};
     }
@@ -123,26 +191,33 @@ class WorkspaceLoader {
     /// insensitive match against the folder). Only warns when none of them
     /// is present — so e.g. having just `releasenotes.json` does NOT also
     /// log "release_notes.json not found".
-    Future<Map<String, String>> readLocaleMap(List<String> candidates) async {
+    Future<Map<String, String>> readLocaleMap(
+      List<String> candidates, {
+      bool trackSyntaxErrors = false,
+    }) async {
       for (final name in candidates) {
         final f = File(p.join(root.path, name));
         if (await f.exists()) {
-          return readOne(f);
+          return readOne(f, trackSyntaxErrors: trackSyntaxErrors);
         }
       }
-      _log.warn(
-          '${candidates.join(" / ")} not found; treated as empty',
+      _log.warn('${candidates.join(" / ")} not found; treated as empty',
           scope: 'workspace');
       return {};
     }
 
-    final descriptions = await readLocaleMap(['description.json']);
+    final descriptions = await readLocaleMap(
+      ['description.json'],
+      trackSyntaxErrors: true,
+    );
     final keywords = await readLocaleMap(['keywords.json']);
     final subtitles = await readLocaleMap(['subtitle.json']);
     // Accept either spelling of the release-notes file. Whichever exists
     // first wins; the other is not checked (no spurious "not found" warn).
-    final releaseNotes =
-        await readLocaleMap(['releasenotes.json', 'release_notes.json']);
+    final releaseNotes = await readLocaleMap(
+      ['releasenotes.json', 'release_notes.json'],
+      trackSyntaxErrors: true,
+    );
 
     // Pre-flight sanity checks — non-blocking.
     final warnings = <String>[];
@@ -224,6 +299,7 @@ class WorkspaceLoader {
       keywords: keywords,
       subtitles: subtitles,
       releaseNotes: releaseNotes,
+      jsonSyntaxErrors: jsonSyntaxErrors,
       warnings: warnings,
     );
   }

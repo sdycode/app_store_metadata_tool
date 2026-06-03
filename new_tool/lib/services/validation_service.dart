@@ -29,14 +29,22 @@ class ValidationService {
     if (ws.config.metadata.packageId.isEmpty) {
       hard.add('metadata.package_id is empty');
     }
-    if (ws.config.creds.keyId.isEmpty) hard.add('app_store_connect.key_id empty');
+    if (ws.config.creds.keyId.isEmpty) {
+      hard.add('app_store_connect.key_id empty');
+    }
     if (ws.config.creds.issuerId.isEmpty) {
       hard.add('app_store_connect.issuer_id empty');
     }
-    if (!ws.p8Key.existsSync()) hard.add('.p8 key not found: ${ws.p8Key.path}');
+    if (!ws.p8Key.existsSync()) {
+      hard.add('.p8 key not found: ${ws.p8Key.path}');
+    }
+    for (final issue in ws.jsonSyntaxErrors) {
+      hard.add(issue.displayMessage);
+    }
 
     if (ws.config.localizations.isEmpty) {
-      soft.add('no localizations declared; will use default ${ws.config.defaultLanguage}');
+      soft.add(
+          'no localizations declared; will use default ${ws.config.defaultLanguage}');
     }
 
     final fallback = ws.config.defaultLanguage;

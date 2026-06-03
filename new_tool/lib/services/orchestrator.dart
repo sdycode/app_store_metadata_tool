@@ -124,6 +124,78 @@ const Set<String> _appInfoLocaleCheckFields = {
   'privacy-url',
 };
 
+class _ScreenshotReadiness {
+  final Map<String, int> totalByDisplay = <String, int>{};
+  final Map<String, int> readyByDisplay = <String, int>{};
+  final Map<String, int> inProcessByDisplay = <String, int>{};
+  final Map<String, int> stateCounts = <String, int>{};
+
+  void addSet(String display, List<AscResource> shots) {
+    final key = display.isEmpty ? '(unknown display)' : display;
+    var readyCount = 0;
+    for (final shot in shots) {
+      final state = _screenshotDeliveryState(shot);
+      stateCounts[state] = (stateCounts[state] ?? 0) + 1;
+      if (state == 'COMPLETE') readyCount++;
+    }
+    final inProcessCount = shots.length - readyCount;
+    totalByDisplay[key] = (totalByDisplay[key] ?? 0) + shots.length;
+    readyByDisplay[key] = (readyByDisplay[key] ?? 0) + readyCount;
+    if (inProcessCount > 0) {
+      inProcessByDisplay[key] = (inProcessByDisplay[key] ?? 0) + inProcessCount;
+    }
+  }
+
+  int get total => _sumCounts(totalByDisplay.values);
+  int get ready => _sumCounts(readyByDisplay.values);
+  int get inProcess => total - ready;
+
+  Map<String, dynamic> toJson() => {
+        'totalByDisplay': totalByDisplay,
+        'readyByDisplay': readyByDisplay,
+        'inProcessByDisplay': inProcessByDisplay,
+        'stateCounts': stateCounts,
+        'total': total,
+        'ready': ready,
+        'inProcess': inProcess,
+      };
+}
+
+int _sumCounts(Iterable<int> values) => values.fold<int>(0, (a, b) => a + b);
+
+String _screenshotDeliveryState(AscResource shot) {
+  final raw = shot.attributes['assetDeliveryState'];
+  if (raw is Map) {
+    final state = (raw['state'] ?? '').toString().trim();
+    if (state.isNotEmpty) return state.toUpperCase();
+  }
+  return 'UNKNOWN';
+}
+
+String _formatCounts(Map<String, int> counts, {bool includeZero = false}) {
+  final entries = counts.entries
+      .where((e) => includeZero || e.value > 0)
+      .map((e) => '${e.key}:${e.value}')
+      .toList();
+  return entries.isEmpty ? '-' : entries.join(', ');
+}
+
+String _stateBreakdown(_ScreenshotReadiness readiness) {
+  if (readiness.stateCounts.isEmpty) return '';
+  return ', states=${_formatCounts(readiness.stateCounts)}';
+}
+
+String _ssIssueLine(
+  String locale,
+  int localCount,
+  _ScreenshotReadiness readiness,
+  String fallbackNote,
+) {
+  return '$locale: local=$localCount, ready=${readiness.ready}, '
+      'inProcess=${readiness.inProcess}, total=${readiness.total}'
+      '$fallbackNote${_stateBreakdown(readiness)}';
+}
+
 class OrchestratorRuntime {
   final Workspace workspace;
   final AuthService auth;
@@ -1302,8 +1374,9 @@ class Orchestrator {
       'selectedLocales': locales,
     };
     final rows = <String, dynamic>{};
-    final notUploaded = <String>[];
-    final countMismatch = <String>[];
+    final noReadyScreenshots = <String>[];
+    final readyCountMismatch = <String>[];
+    final inProcessScreenshots = <String>[];
     final checkErrors = <String>[];
     for (final locale in locales) {
       try {
@@ -1313,8 +1386,7 @@ class Orchestrator {
           orElse: () => AscResource(
               id: '', type: '', attributes: const {}, relationships: const {}),
         );
-        final remote = <String, int>{};
-        int remoteTotal = 0;
+        final readiness = _ScreenshotReadiness();
         final hasLoc = loc.id.isNotEmpty;
         if (hasLoc) {
           final sets = await r.screenshots.listSets(loc.id);
@@ -1322,8 +1394,7 @@ class Orchestrator {
             final display =
                 (s.attributes['screenshotDisplayType'] ?? '').toString();
             final shots = await r.screenshots.listShots(s.id);
-            remote[display] = shots.length;
-            remoteTotal += shots.length;
+            readiness.addSet(display, shots);
           }
         }
         final primary = ws.screenshotDirFor(locale);
@@ -1340,30 +1411,45 @@ class Orchestrator {
 
         rows[locale] = {
           'localization': hasLoc ? 'exists' : 'missing',
-          'remote': remote,
-          'remoteTotal': remoteTotal,
+          'remote': readiness.totalByDisplay,
+          'remoteReady': readiness.readyByDisplay,
+          'remoteInProcess': readiness.inProcessByDisplay,
+          'remoteStateCounts': readiness.stateCounts,
+          'remoteTotal': readiness.total,
+          'remoteReadyTotal': readiness.ready,
+          'remoteInProcessTotal': readiness.inProcess,
           'local': localCount,
           'localFolder':
               usedFallback ? '${ws.config.defaultLanguage} (fallback)' : locale,
         };
 
         final summary = StringBuffer()
-          ..write('$locale → remote=$remoteTotal (')
-          ..write(remote.entries.map((e) => '${e.key}:${e.value}').join(', '))
-          ..write('), local=$localCount');
+          ..write(
+              '$locale -> local=$localCount, ASC ready=${readiness.ready}, ')
+          ..write('inProcess=${readiness.inProcess}, total=${readiness.total}')
+          ..write(' (ready: ')
+          ..write(_formatCounts(readiness.readyByDisplay, includeZero: true))
+          ..write('; inProcess: ')
+          ..write(_formatCounts(readiness.inProcessByDisplay))
+          ..write('; states: ')
+          ..write(_formatCounts(readiness.stateCounts))
+          ..write(')');
         if (!hasLoc) summary.write('  [no remote localization yet]');
         if (usedFallback) {
           summary.write('  [local falls back to ${ws.config.defaultLanguage}]');
         }
         _log.info(summary.toString(), scope: 'check-ss');
 
-        if (localCount > 0 && remoteTotal == 0) {
+        if (localCount > 0 && readiness.ready == 0) {
           final locNote = hasLoc ? '' : ', no remote localization';
-          notUploaded
-              .add('$locale: local=$localCount, remote=0$locNote$fallbackNote');
-        } else if (remoteTotal != localCount) {
-          countMismatch.add(
-              '$locale: local=$localCount, remote=$remoteTotal$fallbackNote');
+          noReadyScreenshots.add(_ssIssueLine(
+              locale, localCount, readiness, '$locNote$fallbackNote'));
+        } else if (readiness.ready != localCount) {
+          readyCountMismatch
+              .add(_ssIssueLine(locale, localCount, readiness, fallbackNote));
+        } else if (readiness.inProcess > 0) {
+          inProcessScreenshots
+              .add(_ssIssueLine(locale, localCount, readiness, fallbackNote));
         }
       } on CancelledException {
         rethrow;
@@ -1375,24 +1461,44 @@ class Orchestrator {
             scope: 'check-ss');
       }
     }
+    report['summary'] = {
+      'noReadyScreenshots': noReadyScreenshots,
+      'readyCountMismatch': readyCountMismatch,
+      'inProcessScreenshots': inProcessScreenshots,
+      'checkErrors': checkErrors,
+    };
     report['locales'] = rows;
-    final hasIssues = notUploaded.isNotEmpty ||
-        countMismatch.isNotEmpty ||
+    final hasIssues = noReadyScreenshots.isNotEmpty ||
+        readyCountMismatch.isNotEmpty ||
+        inProcessScreenshots.isNotEmpty ||
         checkErrors.isNotEmpty;
     if (!hasIssues) {
-      _log.success('Check SS summary: all checked locale counts match',
+      _log.success(
+          'Check SS summary: all checked locale ready counts match local, '
+          'and no in-process screenshots were found',
           scope: 'check-ss');
     } else {
-      final summary = StringBuffer()..writeln('Check SS summary');
-      if (notUploaded.isNotEmpty) {
-        summary.writeln('Not uploaded (${notUploaded.length}):');
-        for (final line in notUploaded) {
+      final summary = StringBuffer()
+        ..writeln('IMPORTANT CHECK SS SUMMARY')
+        ..writeln(
+            'Only assetDeliveryState.state=COMPLETE is counted as ready for review.');
+      if (noReadyScreenshots.isNotEmpty) {
+        summary.writeln(
+            'No ready ASC screenshots (${noReadyScreenshots.length}):');
+        for (final line in noReadyScreenshots) {
           summary.writeln('- $line');
         }
       }
-      if (countMismatch.isNotEmpty) {
-        summary.writeln('Count mismatch (${countMismatch.length}):');
-        for (final line in countMismatch) {
+      if (readyCountMismatch.isNotEmpty) {
+        summary.writeln('Ready count mismatch (${readyCountMismatch.length}):');
+        for (final line in readyCountMismatch) {
+          summary.writeln('- $line');
+        }
+      }
+      if (inProcessScreenshots.isNotEmpty) {
+        summary.writeln(
+            'In-process / not-ready ASC screenshots (${inProcessScreenshots.length}):');
+        for (final line in inProcessScreenshots) {
           summary.writeln('- $line');
         }
       }
@@ -1615,6 +1721,7 @@ class Orchestrator {
     final missingLocalizations = <String>[];
     final missingMetadata = <String>[];
     final missingScreenshots = <String>[];
+    final inProcessScreenshots = <String>[];
     final missingAppInfo = <String>[];
     final globalMissing = <String>[];
     final checkErrors = <String>[];
@@ -1672,17 +1779,22 @@ class Orchestrator {
           missingLocalizations.add(locale);
           continue;
         }
-        final shots = <String, int>{};
+        final readiness = _ScreenshotReadiness();
         final sets = await r.screenshots.listSets(l.id);
         for (final s in sets) {
           final display =
               (s.attributes['screenshotDisplayType'] ?? '').toString();
           final shotsList = await r.screenshots.listShots(s.id);
-          shots[display] = shotsList.length;
+          readiness.addSet(display, shotsList);
         }
-        final remoteShotTotal = shots.values.fold<int>(0, (a, b) => a + b);
-        if (remoteShotTotal == 0) {
-          missingScreenshots.add('$locale: no ASC screenshots');
+        if (readiness.ready == 0) {
+          missingScreenshots.add('$locale: no ready ASC screenshots '
+              '(inProcess=${readiness.inProcess}, total=${readiness.total}'
+              '${_stateBreakdown(readiness)})');
+        } else if (readiness.inProcess > 0) {
+          inProcessScreenshots.add('$locale: ready=${readiness.ready}, '
+              'inProcess=${readiness.inProcess}, total=${readiness.total}'
+              '${_stateBreakdown(readiness)}');
         }
         final attrChecks = <String, String>{
           'description': 'Description',
@@ -1709,7 +1821,11 @@ class Orchestrator {
               (l.attributes['marketingUrl'] ?? '').toString().isNotEmpty,
           'supportUrl':
               (l.attributes['supportUrl'] ?? '').toString().isNotEmpty,
-          'screenshots': shots,
+          'screenshots': readiness.totalByDisplay,
+          'screenshotReady': readiness.readyByDisplay,
+          'screenshotInProcess': readiness.inProcessByDisplay,
+          'screenshotStateCounts': readiness.stateCounts,
+          'screenshotTotals': readiness.toJson(),
         };
       }
       report['editableLocalizations'] = locSummary;
@@ -1768,6 +1884,7 @@ class Orchestrator {
       'missingLocalizations': missingLocalizations,
       'missingMetadata': missingMetadata,
       'missingScreenshots': missingScreenshots,
+      'inProcessScreenshots': inProcessScreenshots,
       'missingAppInfo': missingAppInfo,
       'globalMissing': globalMissing,
       'checkErrors': checkErrors,
@@ -1787,6 +1904,8 @@ class Orchestrator {
     section('Missing ASC version localizations', missingLocalizations);
     section('Missing ASC version metadata', missingMetadata);
     section('Missing ASC screenshots', missingScreenshots);
+    section(
+        'ASC screenshots still processing / not ready', inProcessScreenshots);
     section('Missing ASC app-info metadata', missingAppInfo);
     section('Missing ASC global metadata', globalMissing);
     section('Check errors', checkErrors);
@@ -1794,6 +1913,7 @@ class Orchestrator {
     final hasIssues = missingLocalizations.isNotEmpty ||
         missingMetadata.isNotEmpty ||
         missingScreenshots.isNotEmpty ||
+        inProcessScreenshots.isNotEmpty ||
         missingAppInfo.isNotEmpty ||
         globalMissing.isNotEmpty ||
         checkErrors.isNotEmpty;

@@ -805,6 +805,11 @@ function renderEntry(entry, q) {
   const time = (entry.time || '').split('T')[1]?.split('.')[0] || '';
   const firstLine = entry.message.split('\n', 1)[0];
   const node = el('div', { class: `log ${entry.level}` });
+  if ((entry.scope || '') === 'check-ss' &&
+      firstLine.includes('IMPORTANT CHECK SS SUMMARY')) {
+    node.classList.add('important-summary');
+    node.classList.add('expanded');
+  }
   const header = el('div', { class: 'line' });
   header.appendChild(el('span', { class: 'time' }, time));
   if (entry.scope) header.appendChild(el('span', { class: 'scope' }, `[${entry.scope}]`));

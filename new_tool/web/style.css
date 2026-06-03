@@ -619,6 +619,21 @@ button.link {
 .log.warn    { color: var(--warn); }
 .log.error   { color: var(--error); }
 .log.success { color: var(--success); }
+.log.important-summary {
+  border-width: 2px;
+  border-color: var(--critical-border);
+  background: var(--critical-bg);
+}
+.log.important-summary .line {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--critical-text);
+}
+.log.important-summary .body {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--critical-detail);
+}
 .log .time { color: var(--dim); margin-right: 6px; }
 .log .scope { color: var(--dim); margin-right: 6px; }
 .log .body {

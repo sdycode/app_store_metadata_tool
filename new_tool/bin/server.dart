@@ -228,6 +228,10 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
           await _runAction(
               req, 'Update Category', _orch!.updatePrimaryCategory);
           return;
+        case '/action/update-age-rating':
+          await _runAction(
+              req, 'Set Age Rating (lowest → 4+)', _orch!.updateAgeRating);
+          return;
         case '/action/check-status':
           await _runAction(req, 'Check Status', () async {
             final report = await _orch!.checkStatus();

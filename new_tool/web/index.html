@@ -59,7 +59,7 @@
   <header>
     <div class="header-top">
       <h1>Metadata Uploader</h1>
-      <div class="version-tag" title="Current tool version">Latest version: 03 Jun 2026</div>
+      <div class="version-tag" title="Current tool version">Latest version: 09 Jun 2026</div>
       <div class="theme-switch" role="group" aria-label="Theme">
         <button class="theme-option active" type="button" data-theme-choice="light" aria-pressed="true">Light</button>
         <button class="theme-option" type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
@@ -241,6 +241,15 @@
         <button data-action="/action/update-privacy-url" class="btn">🔒 Privacy URL</button>
         <button data-action="/action/update-copyright" class="btn">© Copyright</button>
         <button data-action="/action/update-category" class="btn">📂 Category</button>
+      </section>
+
+      <section class="card actions age-rating">
+        <div class="section-head">
+          <strong>Age rating</strong>
+          <span class="dim">— app-level, ignores selected locales</span>
+        </div>
+        <button data-action="/action/update-age-rating" class="btn full">🔞 Set Age Rating → Lowest (4+)</button>
+        <div class="dim">One click answers every questionnaire item with its lowest option (None / No) so Apple computes a 4+ rating.</div>
       </section>
 
       <section class="card actions checks">

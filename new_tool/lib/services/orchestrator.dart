@@ -814,6 +814,21 @@ class Orchestrator {
     }
   }
 
+  /// Age-rating questionnaire on the app-level appInfo. One click answers
+  /// every question with its lowest-exposure option (→ 4+). App-level like
+  /// the category, so it ignores the selected-locale set. Reads nothing from
+  /// config.json — the "lowest everything" answers are fixed.
+  Future<void> updateAgeRating() async {
+    final ws = r.workspace;
+    final app = await r.apps.requireByBundleId(ws.config.metadata.packageId);
+    try {
+      final appInfo = await r.appInfo.findEditable(app.id);
+      await r.appInfo.setLowestAgeRating(appInfo.id);
+    } catch (e) {
+      _log.error('age-rating update failed: $e', scope: 'orchestrator');
+    }
+  }
+
   Future<void> _applyAppInfoSubset({
     bool includeName = false,
     bool includePrivacyUrl = false,

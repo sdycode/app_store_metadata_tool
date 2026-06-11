@@ -162,19 +162,35 @@ class UploadConfig {
     required this.inApp,
   });
 
-  factory UploadConfig.fromJson(Map<String, dynamic> j) => UploadConfig(
-        creds: AppStoreConnectCreds.fromJson(
-            j['app_store_connect'] as Map<String, dynamic>),
-        metadata: AppMetadata.fromJson(j['metadata'] as Map<String, dynamic>),
-        defaultLanguage: (j['default_language'] ?? 'en-US') as String,
-        localizations: ((j['localizations'] as List?) ?? const ['en-US'])
-            .map((e) => e.toString())
-            .toList(),
-        specificNameLocales:
-            ((j['specific_name_locales'] as Map?) ?? const {}).map(
-                (k, v) => MapEntry(k.toString(), v.toString())),
-        inApp: j['inapp'] is Map<String, dynamic>
-            ? InAppConfig.fromJson(j['inapp'] as Map<String, dynamic>)
-            : null,
-      );
+  factory UploadConfig.fromJson(Map<String, dynamic> j) {
+    final asc = (j['app_store_connect'] as Map<String, dynamic>?) ??
+        const <String, dynamic>{};
+    // A config may EITHER keep only creds under `app_store_connect` with
+    // everything else (metadata, localizations, inapp, …) at the top level,
+    // OR nest the whole config inside `app_store_connect`. Read each field
+    // from wherever it actually lives so both layouts load.
+    dynamic field(String key) => j.containsKey(key) ? j[key] : asc[key];
+
+    final metadata = field('metadata');
+    if (metadata is! Map<String, dynamic>) {
+      throw const FormatException(
+          "missing 'metadata' object (expected at the top level or nested "
+          "inside 'app_store_connect')");
+    }
+    final inapp = field('inapp');
+    return UploadConfig(
+      creds: AppStoreConnectCreds.fromJson(asc),
+      metadata: AppMetadata.fromJson(metadata),
+      defaultLanguage: (field('default_language') ?? 'en-US') as String,
+      localizations: ((field('localizations') as List?) ?? const ['en-US'])
+          .map((e) => e.toString())
+          .toList(),
+      specificNameLocales:
+          ((field('specific_name_locales') as Map?) ?? const {})
+              .map((k, v) => MapEntry(k.toString(), v.toString())),
+      inApp: inapp is Map<String, dynamic>
+          ? InAppConfig.fromJson(inapp)
+          : null,
+    );
+  }
 }

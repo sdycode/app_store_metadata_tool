@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../models/asc_resource.dart';
 import 'asc_client.dart';
+import 'image_size.dart';
 import 'logging.dart';
 import 'run_state.dart';
 import 'workspace.dart';
@@ -25,6 +26,27 @@ class ScreenshotUploadOutcome {
     required this.action,
   });
 }
+
+/// The only resolutions Apple accepts for the iPad screenshot slot.
+/// Each pair is [short, long]; both orientations are valid, so
+/// 2064x2752 / 2752x2064 / 2048x2732 / 2732x2048 all pass.
+const List<List<int>> kIpadScreenshotSizes = <List<int>>[
+  <int>[2064, 2752],
+  <int>[2048, 2732],
+];
+
+/// Apple never shipped a distinct "iPad 13-inch" enum value — both accepted
+/// iPad sizes are uploaded under APP_IPAD_PRO_3GEN_129 despite its name.
+const String kIpadDisplayType = 'APP_IPAD_PRO_3GEN_129';
+
+/// Human-readable list of the accepted iPad sizes, reused in every warning
+/// so the log and the validator say exactly the same thing.
+const String kIpadAcceptedSizesText =
+    '2064x2752, 2752x2064, 2048x2732 or 2732x2048';
+
+/// True for any App Store Connect display type that belongs to an iPad.
+bool isIpadDisplayType(String displayType) =>
+    displayType.toUpperCase().startsWith('APP_IPAD');
 
 class ScreenshotService {
   final AscClient client;
@@ -96,55 +118,7 @@ class ScreenshotService {
     return null;
   }
 
-  Map<String, int>? _readImageSize(Uint8List bytes) {
-    final png = _readPngSize(bytes);
-    if (png != null) return png;
-    final jpg = _readJpegSize(bytes);
-    if (jpg != null) return jpg;
-    return null;
-  }
-
-  Map<String, int>? _readPngSize(Uint8List bytes) {
-    if (bytes.length < 24) return null;
-    const pngSig = [137, 80, 78, 71, 13, 10, 26, 10];
-    for (var i = 0; i < 8; i++) {
-      if (bytes[i] != pngSig[i]) return null;
-    }
-    final w = (bytes[16] << 24) | (bytes[17] << 16) | (bytes[18] << 8) | bytes[19];
-    final h = (bytes[20] << 24) | (bytes[21] << 16) | (bytes[22] << 8) | bytes[23];
-    return {'width': w, 'height': h};
-  }
-
-  Map<String, int>? _readJpegSize(Uint8List b) {
-    if (b.length < 4 || b[0] != 0xFF || b[1] != 0xD8) return null;
-    var i = 2;
-    while (i + 3 < b.length) {
-      if (b[i] != 0xFF) return null;
-      while (i < b.length && b[i] == 0xFF) {
-        i++;
-      }
-      if (i >= b.length) return null;
-      final marker = b[i];
-      i++;
-      if (marker == 0xD8 || marker == 0xD9 || (marker >= 0xD0 && marker <= 0xD7)) {
-        continue;
-      }
-      if (i + 1 >= b.length) return null;
-      final segLen = (b[i] << 8) | b[i + 1];
-      final isSof = (marker >= 0xC0 && marker <= 0xCF) &&
-          marker != 0xC4 &&
-          marker != 0xC8 &&
-          marker != 0xCC;
-      if (isSof) {
-        if (i + 7 >= b.length) return null;
-        final h = (b[i + 3] << 8) | b[i + 4];
-        final w = (b[i + 5] << 8) | b[i + 6];
-        return {'width': w, 'height': h};
-      }
-      i += segLen;
-    }
-    return null;
-  }
+  Map<String, int>? _readImageSize(Uint8List bytes) => readImageSize(bytes);
 
   List<File> _listLocalShots(Directory dir) {
     if (!dir.existsSync()) return const [];
@@ -167,6 +141,190 @@ class ScreenshotService {
       return primary;
     }
     return ws.screenshotDirFor(ws.config.defaultLanguage);
+  }
+
+  /// iPad counterpart of [detectDisplayType]. Deliberately strict: only the
+  /// four resolutions Apple currently accepts for the iPad slot map to a
+  /// display type, everything else returns null so the caller skips the file
+  /// instead of triggering IMAGE_INCORRECT_DIMENSIONS on upload.
+  String? detectIpadDisplayType(int width, int height) {
+    final long = width > height ? width : height;
+    final short = width > height ? height : width;
+    for (final size in kIpadScreenshotSizes) {
+      if (short == size[0] && long == size[1]) return kIpadDisplayType;
+    }
+    return null;
+  }
+
+  /// `screenshots/ipad/<locale>`, falling back to `screenshots/ipad/<default>`
+  /// when the locale has no folder of its own or the folder is empty —
+  /// same rule the iPhone path uses, just one level deeper.
+  Directory _resolveIpadLocaleDir(Workspace ws, String locale) {
+    final primary = ws.ipadScreenshotDirFor(locale);
+    if (primary.existsSync() && _listLocalShots(primary).isNotEmpty) {
+      return primary;
+    }
+    return ws.ipadScreenshotDirFor(ws.config.defaultLanguage);
+  }
+
+  /// Uploads `screenshots/ipad/<locale>` for one locale.
+  ///
+  /// Kept separate from [syncLocale] on purpose, and scoped so it can only
+  /// ever touch iPad display-type sets: even with [forcefulReplace] on it
+  /// wipes just the sets it is about to refill, so iPhone screenshots on the
+  /// same localization are never deleted.
+  Future<ScreenshotUploadOutcome> syncLocaleIpad({
+    required String localizationId,
+    required String locale,
+    required Workspace workspace,
+    // Always wipe the iPad set's existing shots and re-upload.
+    required bool forcefulReplace,
+    // When forcefulReplace is false: still replace the iPad set's shots if
+    // the local file count differs from the remote count.
+    required bool replaceOnMismatch,
+    RunState? control,
+  }) async {
+    await control?.checkpoint();
+    final dir = _resolveIpadLocaleDir(workspace, locale);
+    final localFiles = _listLocalShots(dir);
+    final sourceFolder = p.join('ipad', p.basename(dir.path));
+
+    if (localFiles.isEmpty) {
+      _log.info('$locale: no local iPad screenshots; keeping existing',
+          scope: 'screenshot-ipad');
+      return ScreenshotUploadOutcome(
+        locale: locale, displayType: '-', uploaded: 0, deleted: 0, action: 'kept');
+    }
+
+    final groups = <String, List<File>>{};
+    for (final f in localFiles) {
+      final bytes = await f.readAsBytes();
+      final size = _readImageSize(bytes);
+      final name = p.basename(f.path);
+      if (size == null) {
+        _log.warn(
+            '$locale: cannot read dimensions of $name — skipping (not PNG/JPEG)',
+            scope: 'screenshot-ipad');
+        continue;
+      }
+      final displayType =
+          detectIpadDisplayType(size['width']!, size['height']!);
+      if (displayType == null) {
+        _log.warn(
+            '$locale ← $sourceFolder/$name ${size['width']}x${size['height']}: '
+            'UNSUPPORTED iPad resolution — skipping this file. '
+            'Accepted iPad sizes: $kIpadAcceptedSizesText.',
+            scope: 'screenshot-ipad');
+        continue;
+      }
+      _log.info(
+          '$locale ← $sourceFolder/$name ${size['width']}x${size['height']} → $displayType',
+          scope: 'screenshot-ipad');
+      groups.putIfAbsent(displayType, () => []).add(f);
+    }
+    if (groups.isEmpty) {
+      _log.warn('$locale: no uploadable iPad images after dimension check',
+          scope: 'screenshot-ipad');
+      return ScreenshotUploadOutcome(
+        locale: locale, displayType: '-', uploaded: 0, deleted: 0, action: 'skipped');
+    }
+
+    int totalUploaded = 0;
+    int totalDeleted = 0;
+    final actions = <String>[];
+
+    final existingSets = await listSets(localizationId);
+
+    for (final entry in groups.entries) {
+      await control?.checkpoint();
+      final displayType = entry.key;
+      final files = entry.value;
+      AscResource? set = existingSets.firstWhere(
+        (s) => (s.attributes['screenshotDisplayType'] ?? '') == displayType,
+        orElse: () => AscResource(
+            id: '', type: '', attributes: const {}, relationships: const {}),
+      );
+      if (set.id.isEmpty) {
+        set = await createSet(
+            localizationId: localizationId, displayType: displayType);
+        _log.info('$locale/$displayType: created set ${set.id}',
+            scope: 'screenshot-ipad');
+      }
+
+      final existingShots = await listShots(set.id);
+
+      if (forcefulReplace) {
+        for (final s in existingShots) {
+          await control?.checkpoint();
+          await deleteShot(s.id);
+          totalDeleted++;
+        }
+        if (existingShots.isNotEmpty) {
+          _log.info(
+              '$locale/$displayType: wiped ${existingShots.length} existing '
+              '(forceful replace)',
+              scope: 'screenshot-ipad');
+        }
+        await _uploadAllIpad(set.id, files, locale, displayType, control);
+        totalUploaded += files.length;
+        actions.add('replaced');
+        continue;
+      }
+
+      if (existingShots.isEmpty) {
+        await _uploadAllIpad(set.id, files, locale, displayType, control);
+        totalUploaded += files.length;
+        actions.add('uploaded');
+        continue;
+      }
+
+      if (existingShots.length != files.length) {
+        if (!replaceOnMismatch) {
+          _log.info(
+              '$locale/$displayType: count mismatch '
+              '(${existingShots.length} vs ${files.length}) — keeping existing '
+              '(both replace options are off)',
+              scope: 'screenshot-ipad');
+          actions.add('kept');
+          continue;
+        }
+        for (final s in existingShots) {
+          await control?.checkpoint();
+          await deleteShot(s.id);
+          totalDeleted++;
+        }
+        _log.info(
+            '$locale/$displayType: count mismatch '
+            '(${existingShots.length}→${files.length}); replaced',
+            scope: 'screenshot-ipad');
+        await _uploadAllIpad(set.id, files, locale, displayType, control);
+        totalUploaded += files.length;
+        actions.add('replaced');
+        continue;
+      }
+
+      _log.info('$locale/$displayType: same count (${files.length}); skipping',
+          scope: 'screenshot-ipad');
+      actions.add('skipped');
+    }
+
+    return ScreenshotUploadOutcome(
+      locale: locale,
+      displayType: groups.keys.join(','),
+      uploaded: totalUploaded,
+      deleted: totalDeleted,
+      action: actions.join(','),
+    );
+  }
+
+  Future<void> _uploadAllIpad(String setId, List<File> files, String locale,
+      String displayType, RunState? control) async {
+    for (final f in files) {
+      await control?.checkpoint();
+      await uploadOne(setId: setId, file: f);
+      _log.success('$locale/$displayType: uploaded ${p.basename(f.path)}',
+          scope: 'screenshot-ipad');
+    }
   }
 
   Future<ScreenshotUploadOutcome> syncLocale({

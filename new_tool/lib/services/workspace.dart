@@ -39,6 +39,15 @@ class Workspace {
   Directory screenshotDirFor(String locale) =>
       Directory(p.join(screenshotsRoot.path, locale));
 
+  /// iPad screenshots live one level deeper: `screenshots/ipad/<locale>`.
+  /// The iPhone layout (`screenshots/<locale>`) is untouched — `ipad` is
+  /// never a locale code, so the two never collide.
+  Directory get ipadScreenshotsRoot =>
+      Directory(p.join(screenshotsRoot.path, 'ipad'));
+
+  Directory ipadScreenshotDirFor(String locale) =>
+      Directory(p.join(ipadScreenshotsRoot.path, locale));
+
   String textFor(Map<String, String> source, String locale, String fallback) {
     return source[locale] ?? source[fallback] ?? '';
   }

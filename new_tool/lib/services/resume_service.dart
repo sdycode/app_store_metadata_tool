@@ -9,21 +9,25 @@ class ResumeState {
   bool versionDone;
   Map<String, bool> metadataByLocale;
   Map<String, bool> screenshotsByLocale;
+  Map<String, bool> ipadScreenshotsByLocale;
   Map<String, bool> iapByProduct;
 
   ResumeState({
     this.versionDone = false,
     Map<String, bool>? metadataByLocale,
     Map<String, bool>? screenshotsByLocale,
+    Map<String, bool>? ipadScreenshotsByLocale,
     Map<String, bool>? iapByProduct,
   })  : metadataByLocale = metadataByLocale ?? {},
         screenshotsByLocale = screenshotsByLocale ?? {},
+        ipadScreenshotsByLocale = ipadScreenshotsByLocale ?? {},
         iapByProduct = iapByProduct ?? {};
 
   Map<String, dynamic> toJson() => {
         'versionDone': versionDone,
         'metadataByLocale': metadataByLocale,
         'screenshotsByLocale': screenshotsByLocale,
+        'ipadScreenshotsByLocale': ipadScreenshotsByLocale,
         'iapByProduct': iapByProduct,
       };
 
@@ -33,6 +37,9 @@ class ResumeState {
             .map((k, v) => MapEntry(k.toString(), v == true)),
         screenshotsByLocale: ((j['screenshotsByLocale'] as Map?) ?? const {})
             .map((k, v) => MapEntry(k.toString(), v == true)),
+        ipadScreenshotsByLocale:
+            ((j['ipadScreenshotsByLocale'] as Map?) ?? const {})
+                .map((k, v) => MapEntry(k.toString(), v == true)),
         iapByProduct: ((j['iapByProduct'] as Map?) ?? const {})
             .map((k, v) => MapEntry(k.toString(), v == true)),
       );

@@ -842,8 +842,9 @@ function renderEntry(entry, q) {
   const time = (entry.time || '').split('T')[1]?.split('.')[0] || '';
   const firstLine = entry.message.split('\n', 1)[0];
   const node = el('div', { class: `log ${entry.level}` });
-  if ((entry.scope || '') === 'check-ss' &&
-      firstLine.includes('IMPORTANT CHECK SS SUMMARY')) {
+  const ssSummaryScope =
+    (entry.scope || '') === 'check-ss' || (entry.scope || '') === 'check-ipad-ss';
+  if (ssSummaryScope && firstLine.includes('IMPORTANT CHECK')) {
     node.classList.add('important-summary');
     node.classList.add('expanded');
   }

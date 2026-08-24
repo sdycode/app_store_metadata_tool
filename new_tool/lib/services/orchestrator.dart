@@ -970,6 +970,101 @@ class Orchestrator {
     }
   }
 
+  Future<void> uploadIpadScreenshots() => _uploadIpadScreenshots();
+
+  /// Same shape as [_uploadScreenshots] but reads `screenshots/ipad/<locale>`
+  /// and only ever writes iPad display-type sets, so the iPhone assets on the
+  /// same localization are left alone.
+  Future<void> _uploadIpadScreenshots({
+    List<_LocaleUploadFailure>? failureSink,
+    bool logSummary = true,
+  }) async {
+    final ws = r.workspace;
+    final locales = _effectiveLocales();
+    if (locales.isEmpty) {
+      _log.warn('No locales selected; nothing to upload',
+          scope: 'orchestrator');
+      return;
+    }
+    if (!ws.ipadScreenshotsRoot.existsSync()) {
+      _log.warn(
+          'No screenshots/ipad folder in this workspace — nothing to upload. '
+          'Expected layout: screenshots/ipad/<locale>/*.png',
+          scope: 'orchestrator');
+      return;
+    }
+    final failures = failureSink ?? <_LocaleUploadFailure>[];
+    final summaryStart = failures.length;
+    final state = await r.resume
+        .load(ws.config.metadata.packageId, ws.config.metadata.updateVersion);
+
+    final app = await r.apps.requireByBundleId(ws.config.metadata.packageId);
+    final version = await r.versions.getOrCreate(
+      appId: app.id,
+      updateVersion: ws.config.metadata.updateVersion,
+    );
+    final existingLocalizations = await r.locs.list(version.id);
+
+    for (final locale in locales) {
+      try {
+        await control.checkpoint();
+        final loc = existingLocalizations.firstWhere(
+          (e) => (e.attributes['locale'] ?? '') == locale,
+          orElse: () => AscResource(
+              id: '', type: '', attributes: const {}, relationships: const {}),
+        );
+        String localizationId = loc.id;
+        if (localizationId.isEmpty) {
+          final created = await r.locs.upsert(
+              versionId: version.id,
+              locale: locale,
+              workspace: ws,
+              control: control);
+          localizationId = created.id;
+        }
+        if (localizationId.isEmpty) {
+          _recordLocaleFailure(
+            failures,
+            step: 'ipad-screenshots',
+            locale: locale,
+            reason: 'no localization id; skipped iPad screenshots',
+          );
+          continue;
+        }
+        final outcome = await r.screenshots.syncLocaleIpad(
+          localizationId: localizationId,
+          locale: locale,
+          workspace: ws,
+          forcefulReplace: forcefulReplace,
+          replaceOnMismatch: replaceOnMismatch,
+          control: control,
+        );
+        _log.info(
+            '$locale (iPad): action=${outcome.action} uploaded=${outcome.uploaded} deleted=${outcome.deleted}',
+            scope: 'orchestrator');
+        state.ipadScreenshotsByLocale[locale] = true;
+        await r.resume.save(ws.config.metadata.packageId,
+            ws.config.metadata.updateVersion, state);
+      } on CancelledException {
+        rethrow;
+      } catch (e) {
+        _recordLocaleFailure(
+          failures,
+          step: 'ipad-screenshots',
+          locale: locale,
+          error: e,
+        );
+      }
+    }
+    if (logSummary) {
+      _logLocaleFailureSummary(
+        'Upload iPad Screenshots',
+        failures,
+        startIndex: summaryStart,
+      );
+    }
+  }
+
   Future<void> uploadIap() async {
     final ws = r.workspace;
     if (ws.config.inApp == null || ws.config.inApp!.iapMetadata.isEmpty) {
@@ -1524,6 +1619,192 @@ class Orchestrator {
         }
       }
       _log.error(summary.toString().trimRight(), scope: 'check-ss');
+    }
+    return report;
+  }
+
+  /// iPad counterpart of [checkScreenshots]: local counts come from
+  /// `screenshots/ipad/<locale>` and remote counts are filtered to iPad
+  /// display-type sets only.
+  Future<Map<String, dynamic>> checkIpadScreenshots() async {
+    final ws = r.workspace;
+    final locales = _effectiveLocales();
+    if (locales.isEmpty) {
+      _log.warn('No locales selected; nothing to check',
+          scope: 'check-ipad-ss');
+      return const {
+        'source': 'App Store Connect',
+        'locales': <String, dynamic>{},
+      };
+    }
+    final app = await r.apps.requireByBundleId(ws.config.metadata.packageId);
+    final version = await _findVersionForChecks(app.id);
+    if (version == null) {
+      final message = ws.config.metadata.updateVersion.trim().isEmpty
+          ? 'No editable ASC version found; cannot check iPad screenshots'
+          : 'ASC version "${ws.config.metadata.updateVersion}" not found; cannot check iPad screenshots';
+      _log.error(message, scope: 'check-ipad-ss');
+      return {
+        'source': 'App Store Connect',
+        'app': app.id,
+        'versionId': null,
+        'error': message,
+        'locales': <String, dynamic>{},
+      };
+    }
+    final localizations = await r.locs.list(version.id);
+    _log.info(
+        'ASC iPad screenshot check: app=${app.id}, version=${version.id}, selectedLocales=${locales.length}',
+        scope: 'check-ipad-ss');
+    final report = <String, dynamic>{
+      'source': 'App Store Connect',
+      'platform': 'iPad',
+      'app': app.id,
+      'versionId': version.id,
+      'versionString': version.attributes['versionString'],
+      'selectedLocales': locales,
+    };
+    final rows = <String, dynamic>{};
+    final noReadyScreenshots = <String>[];
+    final readyCountMismatch = <String>[];
+    final inProcessScreenshots = <String>[];
+    final checkErrors = <String>[];
+    for (final locale in locales) {
+      try {
+        await control.checkpoint();
+        final loc = localizations.firstWhere(
+          (l) => (l.attributes['locale'] ?? '') == locale,
+          orElse: () => AscResource(
+              id: '', type: '', attributes: const {}, relationships: const {}),
+        );
+        final readiness = _ScreenshotReadiness();
+        final hasLoc = loc.id.isNotEmpty;
+        if (hasLoc) {
+          final sets = await r.screenshots.listSets(loc.id);
+          for (final s in sets) {
+            final display =
+                (s.attributes['screenshotDisplayType'] ?? '').toString();
+            if (!isIpadDisplayType(display)) continue;
+            final shots = await r.screenshots.listShots(s.id);
+            readiness.addSet(display, shots);
+          }
+        }
+        final primary = ws.ipadScreenshotDirFor(locale);
+        final fallback = ws.ipadScreenshotDirFor(ws.config.defaultLanguage);
+        final usedFallback =
+            !(primary.existsSync() && _countLocal(primary) > 0) &&
+                locale != ws.config.defaultLanguage;
+        final localDir = (primary.existsSync() && _countLocal(primary) > 0)
+            ? primary
+            : fallback;
+        final localCount = _countLocal(localDir);
+        final fallbackNote =
+            usedFallback ? ', fallback=${ws.config.defaultLanguage}' : '';
+
+        rows[locale] = {
+          'localization': hasLoc ? 'exists' : 'missing',
+          'remote': readiness.totalByDisplay,
+          'remoteReady': readiness.readyByDisplay,
+          'remoteInProcess': readiness.inProcessByDisplay,
+          'remoteStateCounts': readiness.stateCounts,
+          'remoteTotal': readiness.total,
+          'remoteReadyTotal': readiness.ready,
+          'remoteInProcessTotal': readiness.inProcess,
+          'local': localCount,
+          'localFolder': usedFallback
+              ? 'ipad/${ws.config.defaultLanguage} (fallback)'
+              : 'ipad/$locale',
+        };
+
+        final summary = StringBuffer()
+          ..write(
+              '$locale (iPad) -> local=$localCount, ASC ready=${readiness.ready}, ')
+          ..write('inProcess=${readiness.inProcess}, total=${readiness.total}')
+          ..write(' (ready: ')
+          ..write(_formatCounts(readiness.readyByDisplay, includeZero: true))
+          ..write('; inProcess: ')
+          ..write(_formatCounts(readiness.inProcessByDisplay))
+          ..write('; states: ')
+          ..write(_formatCounts(readiness.stateCounts))
+          ..write(')');
+        if (!hasLoc) summary.write('  [no remote localization yet]');
+        if (usedFallback) {
+          summary.write(
+              '  [local falls back to ipad/${ws.config.defaultLanguage}]');
+        }
+        _log.info(summary.toString(), scope: 'check-ipad-ss');
+
+        if (localCount > 0 && readiness.ready == 0) {
+          final locNote = hasLoc ? '' : ', no remote localization';
+          noReadyScreenshots.add(_ssIssueLine(
+              locale, localCount, readiness, '$locNote$fallbackNote'));
+        } else if (readiness.ready != localCount) {
+          readyCountMismatch
+              .add(_ssIssueLine(locale, localCount, readiness, fallbackNote));
+        } else if (readiness.inProcess > 0) {
+          inProcessScreenshots
+              .add(_ssIssueLine(locale, localCount, readiness, fallbackNote));
+        }
+      } on CancelledException {
+        rethrow;
+      } catch (e) {
+        final reason = _failureReason(e);
+        checkErrors.add('$locale: $reason');
+        rows[locale] = {'error': reason};
+        _log.error('$locale check iPad screenshots failed: $reason',
+            scope: 'check-ipad-ss');
+      }
+    }
+    report['summary'] = {
+      'noReadyScreenshots': noReadyScreenshots,
+      'readyCountMismatch': readyCountMismatch,
+      'inProcessScreenshots': inProcessScreenshots,
+      'checkErrors': checkErrors,
+    };
+    report['locales'] = rows;
+    final hasIssues = noReadyScreenshots.isNotEmpty ||
+        readyCountMismatch.isNotEmpty ||
+        inProcessScreenshots.isNotEmpty ||
+        checkErrors.isNotEmpty;
+    if (!hasIssues) {
+      _log.success(
+          'Check iPad SS summary: all checked locale ready counts match local, '
+          'and no in-process iPad screenshots were found',
+          scope: 'check-ipad-ss');
+    } else {
+      final summary = StringBuffer()
+        ..writeln('IMPORTANT CHECK IPAD SS SUMMARY')
+        ..writeln(
+            'Only assetDeliveryState.state=COMPLETE is counted as ready for review.')
+        ..writeln('Local source: screenshots/ipad/<locale>; '
+            'remote counts cover iPad display types only.');
+      if (noReadyScreenshots.isNotEmpty) {
+        summary.writeln(
+            'No ready ASC iPad screenshots (${noReadyScreenshots.length}):');
+        for (final line in noReadyScreenshots) {
+          summary.writeln('- $line');
+        }
+      }
+      if (readyCountMismatch.isNotEmpty) {
+        summary.writeln('Ready count mismatch (${readyCountMismatch.length}):');
+        for (final line in readyCountMismatch) {
+          summary.writeln('- $line');
+        }
+      }
+      if (inProcessScreenshots.isNotEmpty) {
+        summary.writeln(
+            'In-process / not-ready ASC iPad screenshots (${inProcessScreenshots.length}):');
+        for (final line in inProcessScreenshots) {
+          summary.writeln('- $line');
+        }
+      }
+      if (checkErrors.isNotEmpty) {
+        summary.writeln('Check errors (${checkErrors.length}):');
+        for (final line in checkErrors) {
+          summary.writeln('- $line');
+        }
+      }
+      _log.error(summary.toString().trimRight(), scope: 'check-ipad-ss');
     }
     return report;
   }

@@ -59,7 +59,7 @@
   <header>
     <div class="header-top">
       <h1>Metadata Uploader</h1>
-      <div class="version-tag" title="Current tool version">Latest version: 11 Jun 2026</div>
+      <div class="version-tag" title="Current tool version">Latest version: 24 August 2026</div>
       <div class="theme-switch" role="group" aria-label="Theme">
         <button class="theme-option active" type="button" data-theme-choice="light" aria-pressed="true">Light</button>
         <button class="theme-option" type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
@@ -198,6 +198,13 @@
           <input type="checkbox" id="ss-force-replace" checked />
           <span>Forcefully replace SS</span>
         </label>
+        <div class="hint">
+          iPhone SS come from <code>screenshots/&lt;locale&gt;</code>,
+          iPad SS from <code>screenshots/ipad/&lt;locale&gt;</code>
+          (both fall back to the default language).
+          Accepted iPad sizes: 2064&times;2752, 2752&times;2064,
+          2048&times;2732, 2732&times;2048.
+        </div>
       </section>
 
       <section id="run-bar" class="card run-bar hidden">
@@ -218,6 +225,8 @@
         <button data-action="/action/validate" class="btn">✓ Validate</button>
         <button data-action="/action/upload-metadata" class="btn">📄 Upload Metadata</button>
         <button data-action="/action/upload-screenshots" class="btn">🖼 Upload Screenshots</button>
+        <button data-action="/action/upload-ipad-screenshots" class="btn"
+                title="Uploads screenshots/ipad/&lt;locale&gt; — accepted sizes 2064x2752, 2752x2064, 2048x2732, 2732x2048">📱 Upload iPad SS</button>
         <button data-action="/action/upload-iap" class="btn">💰 Upload IAP</button>
         <button data-action="/action/upload-all" class="btn primary">☁ Upload All</button>
       </section>
@@ -259,6 +268,7 @@
         </div>
         <button data-action="/action/check-status" class="btn">👁 Status</button>
         <button data-action="/action/check-screenshots" class="btn">📷 SS</button>
+        <button data-action="/action/check-ipad-screenshots" class="btn">📱 iPad SS</button>
         <button data-action="/action/check-metadata-all" class="btn primary">✓ All Metadata</button>
         <button data-action="/action/check-metadata-name" class="btn">🏷 Name</button>
         <button data-action="/action/check-metadata-description" class="btn">📝 Description</button>

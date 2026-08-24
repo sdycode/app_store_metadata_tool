@@ -189,6 +189,10 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
         case '/action/upload-screenshots':
           await _runAction(req, 'Upload Screenshots', _orch!.uploadScreenshots);
           return;
+        case '/action/upload-ipad-screenshots':
+          await _runAction(req, 'Upload iPad Screenshots',
+              _orch!.uploadIpadScreenshots);
+          return;
         case '/action/upload-iap':
           await _runAction(req, 'Upload IAP', _orch!.uploadIap);
           return;
@@ -244,6 +248,13 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
           await _runAction(req, 'Check Screenshots', () async {
             final report = await _orch!.checkScreenshots();
             _logJsonReport('Screenshot ASC report', report, scope: 'check-ss');
+          });
+          return;
+        case '/action/check-ipad-screenshots':
+          await _runAction(req, 'Check iPad Screenshots', () async {
+            final report = await _orch!.checkIpadScreenshots();
+            _logJsonReport('iPad screenshot ASC report', report,
+                scope: 'check-ipad-ss');
           });
           return;
         case '/action/check-metadata-all':

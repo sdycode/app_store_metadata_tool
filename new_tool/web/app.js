@@ -628,6 +628,22 @@ function renderExtracted(ex) {
     kv('Release notes', `<div class="ex-multiline">${htmlEscape(clip(enUS.release_notes, 400))}</div>`),
   ]);
 
+  // App Review notes are one value for the whole version, so they get their
+  // own block rather than sitting under the per-locale en-US preview.
+  const reviewNotes = ex.review_notes || '';
+  const reviewLimit = ex.review_notes_limit || 4000;
+  const reviewStatus = reviewNotes === ''
+      ? '<span class="dim">empty — App Review notes will be skipped</span>'
+      : reviewNotes.length > reviewLimit
+          ? `<span class="bad">${reviewNotes.length} chars — over the ${reviewLimit} limit, will not be uploaded</span>`
+          : `<span class="ex-pill">${reviewNotes.length} chars</span> <span class="dim">will upload for all selected locales</span>`;
+  const reviewBlock = section('App Review notes', [
+    kv('<code>app_review_information_notes.txt</code>', reviewStatus),
+    reviewNotes === ''
+        ? ''
+        : kv('Notes', `<div class="ex-multiline">${htmlEscape(clip(reviewNotes, 400))}</div>`),
+  ]);
+
   const iapRows = (ex.iaps || []).map((iap) => {
     const localesText = (iap.localizations || [])
         .map((l) => `${l.locale}: ${l.name}`)
@@ -652,7 +668,8 @@ function renderExtracted(ex) {
             : '',
       ]);
 
-  body.innerHTML = jsonErrorBlock + appInfo + urlBlock + contentBlock + iapBlock;
+  body.innerHTML =
+      jsonErrorBlock + appInfo + urlBlock + contentBlock + reviewBlock + iapBlock;
   const subtitle = document.getElementById('extracted-subtitle');
   if (subtitle) {
     subtitle.textContent =

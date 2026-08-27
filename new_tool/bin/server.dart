@@ -228,6 +228,10 @@ Future<void> _handle(HttpRequest req, Directory webDir) async {
         case '/action/update-copyright':
           await _runAction(req, 'Update Copyright', _orch!.updateCopyright);
           return;
+        case '/action/update-review-notes':
+          await _runAction(
+              req, 'Update App Review Notes', _orch!.updateReviewNotes);
+          return;
         case '/action/update-category':
           await _runAction(
               req, 'Update Category', _orch!.updatePrimaryCategory);
@@ -458,6 +462,10 @@ Map<String, dynamic> _extractedSummary(Workspace ws) {
       'subtitle': pick(ws.subtitles) ?? '',
       'release_notes': pick(ws.releaseNotes) ?? '',
     },
+    // App Review notes are version-level free text (one value for every
+    // locale), so they sit outside the per-locale `en_us` preview.
+    'review_notes': ws.reviewNotes,
+    'review_notes_limit': kReviewNotesMaxLength,
     'json_syntax_errors':
         ws.jsonSyntaxErrors.map((issue) => issue.toJson()).toList(),
     'iap_count': iaps.length,

@@ -6,6 +6,9 @@ import 'package:path/path.dart' as p;
 import '../models/config.dart';
 import 'logging.dart';
 
+/// Apple's character limit for the App Review Information "Notes" field.
+const int kReviewNotesMaxLength = 4000;
+
 /// In-memory representation of an uploaded folder on disk (temp dir).
 class Workspace {
   final Directory root;
@@ -15,6 +18,12 @@ class Workspace {
   final Map<String, String> keywords;
   final Map<String, String> subtitles;
   final Map<String, String> releaseNotes;
+
+  /// Free-text App Review notes read from `app_review_information_notes.txt`
+  /// in the workspace root. Version-level (not per-locale) — the same text is
+  /// pushed for every selected locale. Empty string means "no notes file, or
+  /// the file is blank" → the review-notes upload is skipped entirely.
+  final String reviewNotes;
   final List<JsonSyntaxIssue> jsonSyntaxErrors;
 
   /// Non-blocking warnings raised at load time (prefix mismatches, missing
@@ -29,6 +38,7 @@ class Workspace {
     required this.keywords,
     required this.subtitles,
     required this.releaseNotes,
+    this.reviewNotes = '',
     this.jsonSyntaxErrors = const [],
     this.warnings = const [],
   });
@@ -215,6 +225,31 @@ class WorkspaceLoader {
       return {};
     }
 
+    /// Reads the first existing file in [candidates] as plain UTF-8 text.
+    /// Returns '' when none exists or the file holds only whitespace — both
+    /// mean "nothing to push" to every caller.
+    Future<String> readPlainText(List<String> candidates) async {
+      for (final name in candidates) {
+        final f = File(p.join(root.path, name));
+        if (!await f.exists()) continue;
+        try {
+          final text = (await f.readAsString()).trim();
+          if (text.isEmpty) {
+            _log.info('$name is empty; App Review notes will be skipped',
+                scope: 'workspace');
+          }
+          return text;
+        } catch (e) {
+          _log.warn('$name could not be read as text ($e); treated as empty',
+              scope: 'workspace');
+          return '';
+        }
+      }
+      _log.info('${candidates.first} not found; App Review notes will be skipped',
+          scope: 'workspace');
+      return '';
+    }
+
     final descriptions = await readLocaleMap(
       ['description.json'],
       trackSyntaxErrors: true,
@@ -226,6 +261,19 @@ class WorkspaceLoader {
     final releaseNotes = await readLocaleMap(
       ['releasenotes.json', 'release_notes.json'],
       trackSyntaxErrors: true,
+    );
+
+    // App Review "Notes" — a single free-text file in the workspace root, not
+    // a per-locale JSON map. Apple stores it once per app-store version, so
+    // the same text covers every locale. A missing or blank file is normal
+    // (most apps need no notes) and simply means the review-notes step is
+    // skipped rather than pushing an empty value over whatever is there.
+    final reviewNotes = await readPlainText(
+      const [
+        'app_review_information_notes.txt',
+        'app_review_notes.txt',
+        'review_notes.txt',
+      ],
     );
 
     // Pre-flight sanity checks — non-blocking.
@@ -291,6 +339,27 @@ class WorkspaceLoader {
     cov('subtitle', subtitles);
     cov('releasenotes', releaseNotes);
 
+    // App Review notes: log what will be pushed so the user can eyeball it
+    // before clicking upload. Apple caps the field at 4000 characters.
+    if (reviewNotes.isEmpty) {
+      _log.info(
+          'app_review_information_notes.txt: empty → App Review notes will '
+          'NOT be uploaded (existing notes on App Store Connect are left as-is)',
+          scope: 'workspace');
+    } else {
+      _log.info(
+          'app_review_information_notes.txt: ${reviewNotes.length} chars → '
+          'will be uploaded once per version (applies to all locales)',
+          scope: 'workspace');
+      if (reviewNotes.length > kReviewNotesMaxLength) {
+        final msg = 'App Review notes are ${reviewNotes.length} chars '
+            '(limit $kReviewNotesMaxLength) — Apple will reject the upload; '
+            'trim app_review_information_notes.txt';
+        warnings.add(msg);
+        _log.warn(msg, scope: 'workspace');
+      }
+    }
+
     final defKw = keywords[def] ?? '';
     if (defKw.length > 100) {
       _log.warn(
@@ -308,6 +377,7 @@ class WorkspaceLoader {
       keywords: keywords,
       subtitles: subtitles,
       releaseNotes: releaseNotes,
+      reviewNotes: reviewNotes,
       jsonSyntaxErrors: jsonSyntaxErrors,
       warnings: warnings,
     );

@@ -13,6 +13,7 @@ import 'iap_service.dart';
 import 'localization_service.dart';
 import 'logging.dart';
 import 'resume_service.dart';
+import 'review_detail_service.dart';
 import 'run_state.dart';
 import 'screenshot_service.dart';
 import 'validation_service.dart';
@@ -206,6 +207,7 @@ class OrchestratorRuntime {
   final ScreenshotService screenshots;
   final IapService iap;
   final AppInfoService appInfo;
+  final ReviewDetailService reviewDetail;
   final ValidationService validator;
   final ResumeService resume;
 
@@ -219,6 +221,7 @@ class OrchestratorRuntime {
     required this.screenshots,
     required this.iap,
     required this.appInfo,
+    required this.reviewDetail,
     required this.validator,
     required this.resume,
   });
@@ -236,6 +239,7 @@ class OrchestratorRuntime {
       screenshots: ScreenshotService(client),
       iap: IapService(client),
       appInfo: AppInfoService(client),
+      reviewDetail: ReviewDetailService(client),
       validator: ValidationService(),
       resume: ResumeService(Directory(p.join(ws.root.path, '.asc_resume'))),
     );
@@ -598,6 +602,11 @@ class Orchestrator {
       }
     }
 
+    // App Review "Notes". Version-level, so one call covers every selected
+    // locale. Runs in BOTH tabs — a Live Update creates a fresh version whose
+    // review notes start out empty, so they have to be pushed again.
+    await _applyReviewNotes(version.id);
+
     // App-level metadata (categories + per-locale name + privacyPolicyUrl).
     // Runs in BOTH New Push and Live Update — the app name is App-level,
     // not Version-level, so Apple won't auto-inherit it between versions.
@@ -784,6 +793,70 @@ class Orchestrator {
     } catch (e) {
       _log.error('copyright patch failed: $e', scope: 'orchestrator');
     }
+  }
+
+  /// App Review Information → "Notes", read from
+  /// `app_review_information_notes.txt` in the workspace root.
+  ///
+  /// Apple keeps one review detail per version (not per locale), so a single
+  /// call covers every selected locale. Contact info and the demo account are
+  /// filled in by hand in App Store Connect and are never sent here.
+  ///
+  /// A blank notes file means "skip" — pushing an empty string would wipe
+  /// whatever is already on App Store Connect, so an empty file is treated as
+  /// "nothing to say", not "clear the field".
+  Future<void> _applyReviewNotes(String versionId) async {
+    final notes = r.workspace.reviewNotes.trim();
+    if (notes.isEmpty) {
+      _log.info(
+          'App Review notes: app_review_information_notes.txt is missing or '
+          'empty — skipped (existing notes on App Store Connect untouched)',
+          scope: 'orchestrator');
+      return;
+    }
+    if (notes.length > kReviewNotesMaxLength) {
+      _log.error(
+          'App Review notes: ${notes.length} chars exceeds Apple\'s '
+          '$kReviewNotesMaxLength-char limit — not uploaded. Trim '
+          'app_review_information_notes.txt and retry.',
+          scope: 'orchestrator');
+      return;
+    }
+    final localeCount = _effectiveLocales().length;
+    _log.info(
+        '▶ App Review notes → ${notes.length} chars, one value for all '
+        '$localeCount selected locale(s)',
+        scope: 'orchestrator');
+    try {
+      await control.checkpoint();
+      await r.reviewDetail.upsertNotes(versionId: versionId, notes: notes);
+    } on CancelledException {
+      rethrow;
+    } catch (e) {
+      _log.error('App Review notes upload failed: $e', scope: 'orchestrator');
+    }
+  }
+
+  /// Individual-button entry point for the App Review notes.
+  Future<void> updateReviewNotes() async {
+    final ws = r.workspace;
+    if (ws.reviewNotes.trim().isEmpty) {
+      _log.warn(
+          'app_review_information_notes.txt is missing or empty; nothing to '
+          'push (App Store Connect notes are left as they are)',
+          scope: 'orchestrator');
+      return;
+    }
+    final app = await r.apps.requireByBundleId(ws.config.metadata.packageId);
+    final version = await r.versions.getOrCreate(
+      appId: app.id,
+      updateVersion: ws.config.metadata.updateVersion,
+    );
+    _log.info(
+        'target version ${version.attributes['versionString'] ?? '(unknown)'} '
+        '(id=${version.id}, state=${version.attributes['appStoreState'] ?? version.attributes['appVersionState'] ?? 'unknown'})',
+        scope: 'orchestrator');
+    await _applyReviewNotes(version.id);
   }
 
   /// App-name per selected locale (AppInfoLocalization.name).
